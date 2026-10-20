@@ -189,5 +189,24 @@ def device_pixel_map(device: Device, layout: Layout) -> List[Optional[Coord]]:
     return result
 
 
+def mapped_ranges(device: Device, layout: Layout) -> List[Tuple[int, int]]:
+    """Merged [start, stop) LED ranges of a device that are on the grid."""
+    spans = []
+    for p in layout.placements:
+        if p.device_id != device.id:
+            continue
+        count = p.count or max(0, device.led_count - p.start)
+        start, stop = max(0, p.start), min(device.led_count, p.start + count)
+        if stop > start:
+            spans.append((start, stop))
+    merged: List[Tuple[int, int]] = []
+    for start, stop in sorted(spans):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], stop))
+        else:
+            merged.append((start, stop))
+    return merged
+
+
 def build_pixel_maps(devices: List[Device], layout: Layout) -> Dict[str, List[Optional[Coord]]]:
     return {d.id: device_pixel_map(d, layout) for d in devices}

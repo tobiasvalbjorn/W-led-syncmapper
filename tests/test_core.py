@@ -196,3 +196,45 @@ def test_circle_from_two_points_with_arcs():
 def test_straight_segment_unchanged_with_zero_bulge():
     p = Placement(id="p", device_id="d", count=5, points=[[0, 0], [4, 0]], bulges=[0])
     assert placement_coords(p, 5) == [(0, 0), (1, 0), (2, 0), (3, 0), (4, 0)]
+
+
+def test_mapped_ranges_merge_and_segment_plan():
+    from wledhub.mapping import mapped_ranges
+    from wledhub.wled import segment_plan
+
+    layout = Layout(placements=[
+        Placement(id="a", device_id="d", start=0, count=56, points=[[0, 0], [1, 0]]),
+        Placement(id="b", device_id="d", start=56, count=50, points=[[0, 1], [1, 1]]),
+        Placement(id="c", device_id="d", start=120, count=10, points=[[0, 2], [1, 2]]),
+    ])
+    dev = Device(id="d", name="d", host="x", led_count=158)
+    ranges = mapped_ranges(dev, layout)
+    assert ranges == [(0, 106), (120, 130)]
+    assert segment_plan(ranges, 158, 16) == [(0, 106, True), (106, 120, False), (120, 130, True), (130, 158, False)]
+    assert segment_plan(ranges, 158, 3) is None  # needs 4 segments
+
+
+def test_native_state_segments():
+    from wledhub.models import LightState
+    from wledhub.wled import native_state
+
+    st = LightState.from_dict({"on": True, "effect": {"source": "wled", "id": 9}})
+    full = native_state(st, True, 2, segments=[(0, 10, True), (10, 20, False)], max_segments=4)
+    assert full["seg"][0]["start"] == 0 and full["seg"][0]["fx"] == 9 and full["seg"][0]["on"] is True
+    assert full["seg"][1]["on"] is False and "fx" not in full["seg"][1]
+    assert full["seg"][2:] == [{"id": 2, "stop": 0}, {"id": 3, "stop": 0}]
+    light = native_state(st, True, 2, segments=[(0, 10, True), (10, 20, False)], geometry=False)
+    assert light["seg"] == [{"id": 0, **{k: full["seg"][0][k] for k in ("col", "fx", "sx", "ix", "pal")}}]
+
+
+def test_plain_cursor_is_black_with_white_led():
+    from wledhub.hub import Hub
+
+    class FakeStore:
+        config = HubConfig.from_dict({"devices": {"d": {"id": "d", "name": "TV", "host": "x", "led_count": 6}}})
+
+    hub = Hub(FakeStore(), "hub", "0")
+    hub.highlights["d"] = {"index": 3, "start": 0, "count": 6, "marks": [1], "ranges": [], "plain": True,
+                           "until": float("inf")}
+    frame = hub._highlight_frames()["d"]
+    assert frame == [(0, 0, 0)] * 3 + [(255, 255, 255)] + [(0, 0, 0)] * 2

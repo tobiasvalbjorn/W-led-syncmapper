@@ -107,6 +107,7 @@ class Device:
     room_id: Optional[str] = None
     enabled: bool = True
     rgbw: bool = False
+    max_segments: int = 0  # info.leds.maxseg (0 = unknown)
     # Runtime-only fields (not persisted, filled by the hub)
     online: bool = False
     live: bool = False
@@ -127,6 +128,7 @@ class Device:
             room_id=data.get("room_id"),
             enabled=bool(data.get("enabled", True)),
             rgbw=bool(data.get("rgbw", False)),
+            max_segments=int(data.get("max_segments", 0)),
         )
 
     def to_dict(self, runtime: bool = False) -> dict:
@@ -255,6 +257,9 @@ class Settings:
     sync_group: int = 1  # WLED UDP sync group bit used for native-effect sync
     realtime_timeout: float = 2.5  # seconds WLED waits before leaving live mode
     discovery: bool = True
+    # WLED's own effects: set the device's segments to the mapped LED ranges
+    # so unmapped LEDs stay dark there too (devices with a placement only).
+    segments_follow_mapping: bool = True
 
     @classmethod
     def from_dict(cls, data: Optional[dict]) -> "Settings":
@@ -264,6 +269,7 @@ class Settings:
             sync_group=max(1, min(8, int(data.get("sync_group", 1)))),
             realtime_timeout=float(data.get("realtime_timeout", 2.5)),
             discovery=bool(data.get("discovery", True)),
+            segments_follow_mapping=bool(data.get("segments_follow_mapping", True)),
         )
 
 

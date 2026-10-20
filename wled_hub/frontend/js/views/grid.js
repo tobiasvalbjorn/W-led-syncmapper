@@ -49,6 +49,7 @@ export function render(view, store, actions) {
   let hoverSeg = null; // { pid, ranges }: side lit by highlight mode (relative LED ranges)
   let pixelView = false; // canvas shows only the mapped pixels, white on black
   let peek = false; // canvas shows the live colours of the mapped LEDs on black
+  let stripGuides = false; // while mapping: show sides/corners in colour on the real strip (off = black + white cursor)
   // Box selection: [{ pid, k }] points (k = point index; k = "all" for a matrix)
   let multi = [];
   let box = null; // [x0, y0, x1, y1] in layout units while dragging a selection box
@@ -528,7 +529,7 @@ export function render(view, store, actions) {
     // stretches between corners in their own (dimmed) colours, so you can see
     // on the real strip which side you are on
     const ranges = cornerSegments(p, n) ? colourRanges([p], true, 0.3) : [];
-    sendHighlight(p.device_id, { index: abs(cursor), start, count: n, marks, ranges });
+    sendHighlight(p.device_id, { index: abs(cursor), start, count: n, marks, ranges, plain: !stripGuides });
   }
 
   // Highlight mode: light the whole part (or lamp) on the real device.
@@ -656,7 +657,7 @@ export function render(view, store, actions) {
     dirty = true; saveBtn.textContent = "Save layout •";
     const start = p.start || 0;
     highlighted = p.device_id;
-    sendHighlight(p.device_id, { index: start + n - 1, start, count: walk.max, marks: [...corners].map((c) => start + c) });
+    sendHighlight(p.device_id, { index: start + n - 1, start, count: walk.max, marks: [...corners].map((c) => start + c), plain: !stripGuides });
     draw(); drawWalkPanel(); drawForm();
   }
 
@@ -755,9 +756,10 @@ export function render(view, store, actions) {
           arrow("←", "ArrowLeft"), arrow("↑", "ArrowUp"), arrow("↓", "ArrowDown"), arrow("→", "ArrowRight"),
           b("+10", () => walk.dir && walkStep(walk.dir, 10), "Shift+arrow"),
           b("Corner (Enter)", walkCorner), b("Undo LED (⌫)", walkBack),
+          stripGuidesToggle(),
           h("button", { class: "btn small", onclick: finishWalk, title: "The LEDs after this one are not mapped" }, "Stop mapping here (Esc)")),
         h("p", { class: "muted", style: { margin: "8px 0 0", fontSize: "13px" } },
-          "The newest LED is white on the real strip, corners are amber. Same arrow = add, opposite arrow = remove, Enter = corner (then any arrow starts the next side).")));
+          "The newest LED is white on the real strip (everything else black unless strip guides are on). Same arrow = add, opposite arrow = remove, Enter = corner (then any arrow starts the next side).")));
   }
 
   // --- test patterns ----------------------------------------------------------
@@ -853,6 +855,17 @@ export function render(view, store, actions) {
   function cursorOff() {
     cursor = null; guide = null;
     stopHighlight(); draw(); drawForm();
+  }
+
+  // On the real strip while mapping: plain (black, only the white cursor LED)
+  // or with guides (sides in dim colours, first LED green, corners amber).
+  function stripGuidesToggle() {
+    return h("button", { class: `btn small ${stripGuides ? "" : "secondary"}`,
+      title: "Off: the strip is black with only the white cursor LED. On: sides, first LED and corners are shown in colour too.",
+      onclick: () => {
+        stripGuides = !stripGuides;
+        if (walk) rebuildWalk(); else { syncHighlight(); drawForm(); }
+      } }, stripGuides ? "Strip guides: on" : "Strip guides: off");
   }
 
   // Pin the point you clicked (blue ring) to the LED under the cursor – for
@@ -987,9 +1000,10 @@ export function render(view, store, actions) {
         p.shape === "line" ? b("Stop mapping here", stopMappingHere, "End this shape at the cursor LED – the LEDs after it are not mapped and stay dark") : null,
         p.shape === "line" && selPoint !== null && selPoint > 0 && !(isClosed(p.points) && selPoint === p.points.length - 1)
           ? h("button", { class: "btn small", onclick: pinPointHere, title: "The blue-ringed point sits at the cursor LED" }, `Pin point ${selPoint + 1} here (P)`) : null,
+        stripGuidesToggle(),
         b("Close cursor (Esc)", cursorOff)),
       h("p", { class: "muted", style: { margin: "8px 0 0", fontSize: "13px" } },
-        "Arrow keys move 1 LED, Shift+arrow moves 10. White = cursor, green = first LED, orange = corners already set; the sides between corners show in their own colours."));
+        "Arrow keys move 1 LED, Shift+arrow moves 10. On the strip only the white cursor LED is lit; turn on strip guides to also see the first LED (green), corners (orange) and sides in colour."));
     updateCursorLabel();
     return panel;
   }

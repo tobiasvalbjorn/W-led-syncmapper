@@ -32,11 +32,11 @@ import aiohttp
 
 from . import effects as fx
 from .ddp import DDPSender
-from .mapping import build_pixel_maps
+from .mapping import build_pixel_maps, mapped_ranges
 from .models import Device, Group, HubConfig, LightState, Room, new_id, slugify
 from .scanner import ScanSession
 from .store import Store
-from .wled import WLEDClient, WLEDError, native_state, parse_info, realtime_state
+from .wled import WLEDClient, WLEDError, native_state, parse_info, realtime_state, segment_plan
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -83,6 +83,8 @@ class Hub:
         self._last_frames: Dict[str, List[Tuple[int, int, int]]] = {}
         self._tasks: List[asyncio.Task] = []
         self._apply_lock = asyncio.Lock()
+        self._segmented: set = set()  # devices whose WLED segments the hub has rewritten
+        self._seg_sent: Dict[str, list] = {}  # device id -> segment plan last sent
         # device id -> {"index", "start", "count", "marks", "until"} (mapping cursor)
         self.highlights: Dict[str, dict] = {}
 
@@ -208,10 +210,43 @@ class Hub:
             bit = self._sync_bit(target.id)
             await asyncio.gather(
                 *(
-                    self._send(d, native_state(state, sync_send=(i == 0), sync_group=bit))
+                    self._send_native(d, state, i == 0, bit)
                     for i, d in enumerate(devices)
                 )
             )
+
+    async def _send_native(self, device: Device, state: LightState, leader: bool, bit: int) -> None:
+        plan = self._segments_for(device)
+        geometry = plan is not None and self._seg_sent.get(device.id) != plan
+        await self._send(device, native_state(state, sync_send=leader, sync_group=bit, segments=plan,
+                                              max_segments=device.max_segments or 16, geometry=geometry))
+        if plan is not None and device.online:
+            self._seg_sent[device.id] = plan
+        else:
+            self._seg_sent.pop(device.id, None)
+
+    def _segments_for(self, device: Device) -> Optional[List[Tuple[int, int, bool]]]:
+        """WLED segments that keep a native effect on the mapped LEDs only.
+
+        Only for 1D devices that have a placement. A device whose segments
+        the hub changed before but that no longer needs it (mapping removed,
+        setting off) gets one full-length segment back.
+        """
+        mapped = mapped_ranges(device, self.config.layout)
+        if self.config.settings.segments_follow_mapping and mapped and not device.matrix and device.led_count:
+            plan = segment_plan(mapped, device.led_count, device.max_segments)
+            if plan is None:
+                _LOGGER.warning("%s: mapping needs more segments than the device allows; using the whole strip", device.name)
+            elif plan == [(0, device.led_count, True)]:
+                plan = None  # everything is mapped: nothing to limit
+            if plan:
+                self._segmented.add(device.id)
+                return plan
+        if device.id in self._segmented:
+            self._segmented.discard(device.id)
+            self._seg_sent.pop(device.id, None)
+            return [(0, device.led_count, True)]
+        return None
 
     def _sync_bit(self, target_id: str) -> int:
         if target_id not in self._sync_bits:
@@ -347,7 +382,7 @@ class Hub:
             return existing
         device_id = f"wled_{info['mac'][-6:]}" if info["mac"] else new_id("wled")
         device = Device(id=device_id, host=host, port=port, room_id=room_id, online=True, **{
-            k: info[k] for k in ("name", "mac", "led_count", "matrix", "version", "rgbw")
+            k: info[k] for k in ("name", "mac", "led_count", "matrix", "version", "rgbw", "max_segments")
         })
         self.config.devices[device.id] = device
         self.rebuild_maps()
@@ -415,10 +450,13 @@ class Hub:
             device.online = False
             return
         was_offline = not device.online
+        if was_offline:
+            self._seg_sent.pop(device.id, None)  # a rebooted device has its own segments again
         device.online = True
         device.live = info["live"]
         device.version = info["version"]
         device.rgbw = info["rgbw"]
+        device.max_segments = info["max_segments"] or device.max_segments
         if info["led_count"] != device.led_count or info["matrix"] != device.matrix:
             device.led_count = info["led_count"]
             device.matrix = info["matrix"]
@@ -548,6 +586,7 @@ class Hub:
         self.config.layout = Layout.from_dict(data)
         self.rebuild_maps()
         self.changed()
+        await self.reapply_all()  # WLED segments follow the new mapping
 
     # -------------------------------------------------------------- scanner
 
@@ -564,7 +603,8 @@ class Hub:
 
     async def highlight(self, device_id: str, index: int = -1, start: int = 0, count: int = 0,
                         marks: Optional[List[int]] = None,
-                        ranges: Optional[List[list]] = None, effect: str = "solid") -> None:
+                        ranges: Optional[List[list]] = None, effect: str = "solid",
+                        plain: bool = False) -> None:
         """Show the grid editor's selection or a test pattern on the real strip.
 
         ranges: [[start, count, [r, g, b]?], ...] – LED ranges to light, each
@@ -574,7 +614,8 @@ class Hub:
         "rainbow" (hue along each range).
         Cursor mode (index >= 0) draws on top: the LED under the cursor white,
         the first LED green, corners already set amber. Without ranges the
-        placement range is shown dim blue.
+        placement range is shown dim blue. plain=True: black strip with only
+        the white cursor LED, nothing else – easiest to see while mapping.
         """
         if effect not in ("solid", "chase", "rainbow"):
             raise ValueError(f"Unknown test effect {effect}")
@@ -587,7 +628,7 @@ class Hub:
         self.highlights[device_id] = {
             "index": int(index), "start": int(start), "count": int(count) or device.led_count - int(start),
             "marks": [int(m) for m in (marks or [])],
-            "ranges": parsed, "effect": effect, "since": time.monotonic(),
+            "ranges": parsed, "effect": effect, "since": time.monotonic(), "plain": bool(plain),
             "until": time.monotonic() + self.HIGHLIGHT_IDLE,
         }
         if fresh:
@@ -613,6 +654,11 @@ class Hub:
             for start, count, color in hl.get("ranges", []):
                 _paint_range(frame, start, count, color, hl.get("effect", "solid"), t)
             if hl["index"] < 0:
+                frames[device_id] = frame
+                continue
+            if hl.get("plain"):
+                if 0 <= hl["index"] < device.led_count:
+                    frame[hl["index"]] = (255, 255, 255)  # only the cursor, on black
                 frames[device_id] = frame
                 continue
             if not hl.get("ranges"):

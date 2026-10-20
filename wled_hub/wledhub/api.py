@@ -172,7 +172,7 @@ def create_app(hub: Hub, frontend: Path, token: Optional[str] = None,
         data = await body(request)
         await hub.highlight(request.match_info["device_id"], int(data.get("index", -1)),
                             int(data.get("start", 0)), int(data.get("count", 0)), data.get("marks"),
-                            data.get("ranges"), str(data.get("effect", "solid")))
+                            data.get("ranges"), str(data.get("effect", "solid")), bool(data.get("plain", False)))
         return json_response({"ok": True})
 
     @routes.delete("/api/devices/{device_id}/highlight")

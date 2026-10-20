@@ -6,6 +6,7 @@ export const title = "Settings";
 export function render(view, store) {
   const s = store.config.settings;
   const fps = h("input", { type: "number", min: 5, max: 60, value: s.fps });
+  const segs = h("input", { type: "checkbox", checked: s.segments_follow_mapping });
   const theme = h("select", {},
     [["", "Follow system"], ["light", "Light"], ["dark", "Dark"]].map(([v, l]) =>
       h("option", { value: v, selected: (document.documentElement.dataset.theme || "") === v }, l)));
@@ -22,9 +23,13 @@ export function render(view, store) {
     h("div", { class: "list" },
       h("div", { class: "list-item" },
         h("div", { class: "grow" }, "Frames per second", h("div", { class: "muted" }, "For hub effects (DDP). 30–40 is smooth; lower saves WiFi.")),
-        fps)),
+        fps),
+      h("label", { class: "list-item" },
+        h("div", { class: "grow" }, "WLED effects follow the mapping",
+          h("div", { class: "muted" }, "When a room runs one of WLED's own effects, the hub sets each mapped device's WLED segments so only LEDs on the grid light up. Turn off if you manage segments in WLED yourself. Devices without a placement and 2D matrices are never changed.")),
+        segs)),
     h("button", { class: "btn", style: { marginTop: "12px" }, onclick: async () => {
-      try { await patch("settings", { fps: Number(fps.value) }); toast("Saved"); } catch (e) { toast(e.message); }
+      try { await patch("settings", { fps: Number(fps.value), segments_follow_mapping: segs.checked }); toast("Saved"); } catch (e) { toast(e.message); }
     } }, "Save"),
     h("div", { class: "section-title" }, "About"),
     h("div", { class: "list" },

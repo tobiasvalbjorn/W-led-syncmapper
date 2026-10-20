@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.0
+
+- WLED's own effects follow the mapping too: when a room runs a WLED effect, the hub sets each mapped device's WLED segments so the mapped LED ranges run the effect and the gaps are switched off. Devices without a placement and 2D matrices are not changed; the setting "WLED effects follow the mapping" turns it off (the hub then restores one full segment).
+- While mapping, the real strip is black with only the white cursor LED. "Strip guides" brings back the side colours, green first LED and amber corners.
+
 ## 0.6.0
 
 - Strict mapping: only LEDs drawn on the grid take part in hub effects. Unmapped LEDs – and devices with no placement – stay dark (no more temporary line).
