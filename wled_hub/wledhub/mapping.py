@@ -45,6 +45,35 @@ def _polyline(points: List[List[float]], count: int) -> List[Coord]:
     return coords
 
 
+def _anchored(points: List[List[float]], anchors: List[int], count: int) -> List[Coord]:
+    """LEDs between two anchored points are spread evenly on that segment."""
+    coords: List[Coord] = []
+    last = len(points) - 1
+    for i in range(count):
+        if i <= anchors[0]:
+            coords.append((float(points[0][0]), float(points[0][1])))
+            continue
+        if i >= anchors[last]:
+            coords.append((float(points[last][0]), float(points[last][1])))
+            continue
+        j = 0
+        while j < last - 1 and anchors[j + 1] <= i:
+            j += 1
+        a, b = points[j], points[j + 1]
+        span = anchors[j + 1] - anchors[j]
+        t = 0.0 if span <= 0 else (i - anchors[j]) / span
+        coords.append((a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t))
+    return coords
+
+
+def anchors_valid(anchors: List[int], points: List[List[float]]) -> bool:
+    return (
+        len(points) >= 2
+        and len(anchors) == len(points)
+        and all(b >= a for a, b in zip(anchors, anchors[1:]))
+    )
+
+
 def _matrix(p: Placement, count: int) -> List[Coord]:
     cols = p.cols or 1
     rows = p.rows or max(1, math.ceil(count / cols))
@@ -79,6 +108,8 @@ def placement_coords(p: Placement, device_leds: int) -> List[Coord]:
     elif p.shape == "points":
         coords = [(float(pt[0]), float(pt[1])) for pt in p.points[:count]]
         coords += [coords[-1] if coords else (0.0, 0.0)] * (count - len(coords))
+    elif anchors_valid(p.anchors, p.points):
+        coords = _anchored(p.points, p.anchors, count)
     else:
         coords = _polyline(p.points, count)
     if p.reverse:

@@ -106,3 +106,37 @@ def test_config_round_trip():
     assert again.to_dict() == cfg.to_dict()
     assert again.rooms["r"].state.effect.id == "plasma"
     assert "online" not in cfg.to_dict()["devices"]["d"]
+
+
+def test_anchored_rectangle_pins_corners_to_leds():
+    # TV backlight: 10 LEDs bottom-left -> up the left side (2), top (4), right (2), bottom (2)
+    pts = [[0, 4], [0, 0], [8, 0], [8, 4], [0, 4]]
+    p = Placement(id="p", device_id="d", count=10, points=pts, anchors=[0, 2, 6, 8, 10])
+    coords = placement_coords(p, 10)
+    assert coords[0] == (0, 4)
+    assert coords[2] == (0, 0)  # LED 2 sits exactly in the top-left corner
+    assert coords[6] == (8, 0)
+    assert coords[8] == (8, 4)
+    assert coords[1] == (0, 2)
+    assert coords[9] == (4, 4)  # last LED half-way back along the bottom
+
+
+def test_invalid_anchors_fall_back_to_even_spacing():
+    p = Placement(id="p", device_id="d", count=5, points=[[0, 0], [4, 0]], anchors=[0, 9, 2])
+    assert placement_coords(p, 5) == [(0, 0), (1, 0), (2, 0), (3, 0), (4, 0)]
+
+
+def test_highlight_frame():
+    from wledhub.hub import Hub
+
+    class FakeStore:
+        config = HubConfig.from_dict({"devices": {"d": {"id": "d", "name": "TV", "host": "x", "led_count": 8}}})
+
+    hub = Hub(FakeStore(), "hub", "0")
+    hub.highlights["d"] = {"index": 3, "start": 2, "count": 4, "marks": [4], "until": float("inf")}
+    frame = hub._highlight_frames()["d"]
+    assert frame[3] == (255, 255, 255)
+    assert frame[2] == (0, 70, 0)
+    assert frame[4] == (120, 50, 0)
+    assert frame[5] == (0, 0, 24)
+    assert frame[0] == (0, 0, 0) and frame[7] == (0, 0, 0)

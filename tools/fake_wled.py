@@ -26,12 +26,39 @@ def make_app(args) -> web.Application:
         w, h = args.matrix.lower().split("x")
         leds["matrix"] = {"w": int(w), "h": int(h)}
     info = {"ver": "16.0.1", "name": args.name, "mac": mac, "arch": "esp32", "leds": leds,
-            "live": False, "lm": "", "lip": "", "udpport": 21324}
+            "live": False, "lm": "", "lip": "", "udpport": 21324, "uptime": 93784,
+            "wifi": {"rssi": -58, "signal": 84}, "freeheap": 120000}
+    state["nl"] = {"on": False, "dur": 60, "mode": 1, "tbri": 0}
+    state["transition"] = 7
+    state["lor"] = 0
+    presets = {"0": {}, "1": {"n": "Hygge", "on": True, "bri": 90}, "2": {"n": "Jul", "on": True, "bri": 200}}
     outputs = [{"start": 0, "len": args.leds, "pin": [16], "type": 22, "rev": False}]
     if args.outputs > 1:
         per = args.leds // args.outputs
         outputs = [{"start": i * per, "len": per if i < args.outputs - 1 else args.leds - i * per,
                     "pin": [16 + i], "type": 22, "rev": False} for i in range(args.outputs)]
+
+    cfg = {"id": {"mdns": f"wled-{mac[-6:]}", "name": args.name},
+           "hw": {"led": {"total": args.leds, "maxpwr": 850, "ins": outputs}},
+           "light": {"nl": {"mode": 1, "dur": 60, "tbri": 0}},
+           "if": {"sync": {"port0": 21324, "port1": 65506,
+                           "recv": {"bri": True, "col": True, "fx": True, "pal": True, "grp": 1, "seg": False, "sb": False},
+                           "send": {"en": False, "dir": False, "btn": False, "va": False, "hue": True, "grp": 1, "ret": 0}},
+                  "live": {"en": True, "mso": False, "rlm": False, "port": 5568, "mc": False, "timeout": 25,
+                           "dmx": {"uni": 1, "seqskip": False, "addr": 1, "mode": 4}}}}
+
+    def merge(a, b):
+        for k, v in b.items():
+            if isinstance(v, dict) and isinstance(a.get(k), dict):
+                merge(a[k], v)
+            else:
+                a[k] = v
+
+    async def post_cfg(request):
+        data = await request.json()
+        print(f"[{args.name}] cfg <- {json.dumps(data)}")
+        merge(cfg, data)
+        return web.json_response({"success": True})
 
     async def get_info(_):
         info["live"] = state["live"]
@@ -43,7 +70,13 @@ def make_app(args) -> web.Application:
     async def post_state(request):
         data = await request.json()
         print(f"[{args.name}] state <- {json.dumps(data)}")
+        if "psave" in data:
+            presets[str(data["psave"])] = {"n": data.get("n", ""), "on": state["on"], "bri": state["bri"]}
+        if "pdel" in data:
+            presets.pop(str(data["pdel"]), None)
         for key, value in data.items():
+            if key in ("psave", "pdel", "n", "ib", "sb", "rb", "ps"):
+                continue
             if key == "seg":
                 for seg in value:
                     state["seg"][0].update(seg)
@@ -59,7 +92,9 @@ def make_app(args) -> web.Application:
     app.router.add_post("/json/state", post_state)
     app.router.add_get("/json/effects", lambda _: web.json_response(["Solid", "Blink", "Breathe", "Wipe", "Rainbow", "Colorloop"]))
     app.router.add_get("/json/palettes", lambda _: web.json_response(["Default", "* Random Cycle", "Party", "Ocean"]))
-    app.router.add_get("/json/cfg", lambda _: web.json_response({"hw": {"led": {"ins": outputs}}}))
+    app.router.add_get("/json/cfg", lambda _: web.json_response(cfg))
+    app.router.add_post("/json/cfg", post_cfg)
+    app.router.add_get("/presets.json", lambda _: web.json_response(presets))
     app["state"] = state
     return app
 

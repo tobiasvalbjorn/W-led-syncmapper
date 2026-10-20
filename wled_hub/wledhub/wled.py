@@ -26,7 +26,7 @@ class WLEDClient:
         self.port = port
         self.base = f"http://{host}:{port}" if port != 80 else f"http://{host}"
 
-    async def _request(self, method: str, path: str, payload: Optional[dict] = None) -> Any:
+    async def request(self, method: str, path: str, payload: Optional[dict] = None) -> Any:
         try:
             async with self.session.request(method, self.base + path, json=payload, timeout=TIMEOUT) as resp:
                 if resp.status == 401:
@@ -38,23 +38,23 @@ class WLEDClient:
             raise WLEDError(f"{self.host}: {err.__class__.__name__} {err}") from err
 
     async def info(self) -> Dict[str, Any]:
-        return await self._request("GET", "/json/info")
+        return await self.request("GET", "/json/info")
 
     async def state(self) -> Dict[str, Any]:
-        return await self._request("GET", "/json/state")
+        return await self.request("GET", "/json/state")
 
     async def effects(self) -> List[str]:
-        return await self._request("GET", "/json/effects")
+        return await self.request("GET", "/json/effects")
 
     async def palettes(self) -> List[str]:
-        return await self._request("GET", "/json/palettes")
+        return await self.request("GET", "/json/palettes")
 
     async def set_state(self, state: Dict[str, Any]) -> Any:
-        return await self._request("POST", "/json/state", state)
+        return await self.request("POST", "/json/state", state)
 
     async def set_config(self, cfg: Dict[str, Any]) -> Any:
         """Partial config merge. Writes flash on the device: use sparingly."""
-        return await self._request("POST", "/json/cfg", cfg)
+        return await self.request("POST", "/json/cfg", cfg)
 
 
 def parse_info(info: Dict[str, Any]) -> Dict[str, Any]:

@@ -24,6 +24,50 @@ function polyline(points, count) {
   return out;
 }
 
+function anchored(points, anchors, count) {
+  const last = points.length - 1, out = [];
+  for (let i = 0; i < count; i++) {
+    if (i <= anchors[0]) { out.push([points[0][0], points[0][1]]); continue; }
+    if (i >= anchors[last]) { out.push([points[last][0], points[last][1]]); continue; }
+    let j = 0;
+    while (j < last - 1 && anchors[j + 1] <= i) j++;
+    const a = points[j], b = points[j + 1], span = anchors[j + 1] - anchors[j];
+    const t = span > 0 ? (i - anchors[j]) / span : 0;
+    out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+  }
+  return out;
+}
+
+export function anchorsValid(p) {
+  const a = p.anchors || [];
+  return (p.points || []).length >= 2 && a.length === p.points.length && a.every((v, i) => !i || v >= a[i - 1]);
+}
+
+export function isClosed(points) {
+  if (points.length < 3) return false;
+  const a = points[0], b = points[points.length - 1];
+  return Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-6;
+}
+
+// Anchors that reproduce "evenly by length" – the starting point before the
+// user pins corners to real LEDs. Closed shapes end at `count` (just before
+// the first point again), open ones at the last LED.
+export function anchorsFromLengths(points, count) {
+  const lens = [0];
+  for (let i = 1; i < points.length; i++) {
+    lens.push(lens[i - 1] + Math.hypot(points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1]));
+  }
+  const total = lens[lens.length - 1] || 1;
+  const end = isClosed(points) ? count : Math.max(0, count - 1);
+  const anchors = lens.map((l) => Math.round((l / total) * end));
+  for (let i = 1; i < anchors.length; i++) anchors[i] = Math.max(anchors[i], anchors[i - 1]);
+  return anchors;
+}
+
+export function ledCount(p, deviceLeds) {
+  return p.count || Math.max(0, deviceLeds - (p.start || 0));
+}
+
 function matrix(p, count) {
   const cols = p.cols || 1, rows = p.rows || Math.max(1, Math.ceil(count / cols));
   const flipX = p.origin?.endsWith("right"), flipY = p.origin?.startsWith("bottom");
@@ -53,7 +97,8 @@ export function placementCoords(p, deviceLeds) {
   else if (p.shape === "points") {
     coords = p.points.slice(0, count).map((pt) => [pt[0], pt[1]]);
     while (coords.length < count) coords.push(coords[coords.length - 1] || [0, 0]);
-  } else coords = polyline(p.points || [], count);
+  } else if (anchorsValid(p)) coords = anchored(p.points, p.anchors, count);
+  else coords = polyline(p.points || [], count);
   if (p.reverse) coords.reverse();
   return coords;
 }
@@ -64,7 +109,7 @@ export function newPlacement(deviceId, layout, extra = {}) {
     id: `pl_${Math.random().toString(16).slice(2, 10)}`,
     device_id: deviceId, start: 0, count: 0, shape: "line",
     points: [[layout.width * 0.1, y], [layout.width * 0.9, y]],
-    reverse: false, x: layout.width * 0.3, y: layout.height * 0.3, width: layout.width * 0.2,
+    anchors: [], reverse: false, x: layout.width * 0.3, y: layout.height * 0.3, width: layout.width * 0.2,
     height: layout.height * 0.3, cols: 0, rows: 0, serpentine: true, origin: "top-left", vertical: false, z: 0,
     ...extra,
   };

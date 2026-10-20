@@ -5,6 +5,8 @@ A central hub that controls and synchronises all your [WLED](https://kno.wled.ge
 - **Sonos-style rooms and groups**: drag one room onto another to link them, for example into "Whole house".
 - **A shared pixel grid**: every light string is placed on one map of the house, so hub effects flow across devices.
 - **Twinkly-style camera mapping**: stand in front of the house and your phone works out where every LED is.
+- **Mapping by hand**: shape templates (rectangle for a TV backlight, windows, gables …) and an LED cursor you move with the arrow keys. The LED lights up on the real strip, so you can pin each corner to the LED that sits there.
+- **Every WLED setting in one place**: sync, realtime, nightlight, presets, segments and a raw JSON editor for each device.
 - **Home Assistant**: every room and group becomes a `light` entity with brightness, colour and effects. The hub is discovered automatically, and the whole app is available in the sidebar.
 - **Phone app**: a PWA you install from the browser. It also works in any browser on your local network.
 

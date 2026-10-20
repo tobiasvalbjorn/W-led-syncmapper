@@ -10,6 +10,10 @@ PATCH  api/devices/{id}                       rename / move to room / disable
 DELETE api/devices/{id}
 GET    api/devices/{id}/outputs               LED outputs (strings) on the ESP
 POST   api/devices/{id}/identify              blink it
+GET    api/devices/{id}/wled/{path}           proxy to the device (json/cfg, presets.json …)
+POST   api/devices/{id}/wled/json/state|cfg   change any WLED setting
+POST   api/devices/{id}/highlight {index, start?, count?, marks?}  mapping cursor
+DELETE api/devices/{id}/highlight             end the mapping cursor
 POST   api/rooms              {name, icon}
 PATCH  api/rooms/{id}
 DELETE api/rooms/{id}
@@ -41,6 +45,10 @@ from .wled import WLEDError
 
 _LOGGER = logging.getLogger(__name__)
 INGRESS_PEER = "172.30.32.2"  # Home Assistant Supervisor ingress proxy
+# Device API paths the app may read / write through the hub's proxy
+WLED_READ = {"json", "json/state", "json/info", "json/si", "json/cfg", "json/effects",
+             "json/palettes", "json/nodes", "presets.json"}
+WLED_WRITE = {"json/state", "json/cfg"}
 
 
 def json_response(data, status: int = 200) -> web.Response:
@@ -158,6 +166,40 @@ def create_app(hub: Hub, frontend: Path, token: Optional[str] = None,
     async def identify(request):
         asyncio.ensure_future(hub.identify(request.match_info["device_id"]))
         return json_response({"ok": True})
+
+    @routes.post("/api/devices/{device_id}/highlight")
+    async def highlight(request):
+        data = await body(request)
+        await hub.highlight(request.match_info["device_id"], int(data.get("index", 0)),
+                            int(data.get("start", 0)), int(data.get("count", 0)), data.get("marks"))
+        return json_response({"ok": True})
+
+    @routes.delete("/api/devices/{device_id}/highlight")
+    async def clear_highlight(request):
+        await hub.clear_highlight(request.match_info["device_id"])
+        return json_response({"ok": True})
+
+    # Direct access to a device's own WLED API (all settings: sync, live,
+    # nightlight, presets, segments, raw config). Proxied so it also works
+    # through ingress/HTTPS, where the browser may not reach the device.
+    @routes.get("/api/devices/{device_id}/wled/{path:.+}")
+    async def wled_get(request):
+        path = request.match_info["path"]
+        if path not in WLED_READ:
+            raise ValueError(f"Not allowed: {path}")
+        device = hub.config.devices[request.match_info["device_id"]]
+        return json_response(await hub.client(device).request("GET", "/" + path))
+
+    @routes.post("/api/devices/{device_id}/wled/{path:.+}")
+    async def wled_post(request):
+        path = request.match_info["path"]
+        if path not in WLED_WRITE:
+            raise ValueError(f"Not allowed: {path}")
+        device = hub.config.devices[request.match_info["device_id"]]
+        result = await hub.client(device).request("POST", "/" + path, await body(request))
+        if path == "json/cfg":
+            asyncio.ensure_future(hub.refresh_device(device))  # LED count etc. may have changed
+        return json_response(result)
 
     # rooms & groups
     @routes.post("/api/rooms")

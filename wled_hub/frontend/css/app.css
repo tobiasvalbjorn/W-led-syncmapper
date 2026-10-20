@@ -158,3 +158,4 @@ input[type=range]::-moz-range-thumb { width: 24px; height: 24px; border-radius: 
 }
 .row > .field { flex: 1; min-width: 0; }
 .field input, .field select { width: 100%; min-width: 0; }
+[hidden] { display: none !important; }

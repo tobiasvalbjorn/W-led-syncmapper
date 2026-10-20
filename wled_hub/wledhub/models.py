@@ -200,6 +200,11 @@ class Placement:
     count: int = 0  # number of LEDs (0 = rest of the device)
     shape: str = "line"  # "line" | "matrix" | "points"
     points: List[List[float]] = field(default_factory=list)
+    # Optional LED index (relative to `start`) that sits on each point, so a
+    # corner is pinned to the LED that is physically in that corner. For a
+    # closed shape the last anchor is `count` (the loop ends just before the
+    # first point). Empty = LEDs spread evenly by length.
+    anchors: List[int] = field(default_factory=list)
     reverse: bool = False
     # matrix only
     x: float = 0.0
@@ -212,6 +217,7 @@ class Placement:
     origin: str = "top-left"  # top-left | top-right | bottom-left | bottom-right
     vertical: bool = False  # True when the wiring runs in columns
     z: float = 0.0  # optional height (floor) for multi-storey houses
+    template: str = ""  # shape template it was made from (rect, u_top, …), for the corner guide
 
     @classmethod
     def from_dict(cls, data: dict) -> "Placement":

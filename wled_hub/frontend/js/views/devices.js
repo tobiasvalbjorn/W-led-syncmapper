@@ -1,6 +1,7 @@
 // "Enheder": discovered + added WLED devices; drag (or pick) a room for each.
 import { del, get, patch, post } from "../api.js";
 import { h, icon, sheet, toast } from "../ui.js";
+import { openDeviceSettings } from "./devicesettings.js";
 
 export const title = "Enheder";
 
@@ -92,6 +93,7 @@ async function deviceSheet(store, id) {
     h("div", { class: "field" }, h("label", {}, "LED-outputs (lyskæder på ESP'en)"), outputs),
     h("div", { class: "row", style: { flexWrap: "wrap" } },
       h("button", { class: "btn", onclick: async () => { await patch(`devices/${id}`, { name: name.value.trim() }); toast("Gemt"); } }, "Gem"),
+      h("button", { class: "btn secondary", onclick: () => { s.close(); openDeviceSettings(store, id); } }, "Alle WLED-indstillinger"),
       h("button", { class: "btn secondary", onclick: () => post(`devices/${id}/identify`).then(() => toast("Blinker i 3 sekunder")) }, "Identificér"),
       h("a", { class: "btn secondary", href: `http://${d.host}/`, target: "_blank", rel: "noopener" }, "Åbn WLED"),
       h("button", { class: "btn danger", onclick: async () => {

@@ -74,7 +74,8 @@ When a target switches from a hub effect to a WLED effect, the hub sends `"live"
     "width": 20, "height": 12, "background": "data:image/jpeg;base64,… (optional)",
     "placements": [
       { "id": "pl_1", "device_id": "wled_a1b2c3", "start": 0, "count": 150, "shape": "line",
-        "points": [[1, 2], [6, 2], [6, 5], [1, 5], [1, 2]], "reverse": false },
+        "template": "rect", "points": [[1, 2], [6, 2], [6, 5], [1, 5], [1, 2]],
+        "anchors": [0, 50, 75, 125, 150], "reverse": false },
       { "id": "pl_2", "device_id": "wled_a1b2c3", "start": 150, "count": 150, "shape": "points",
         "points": [[8.1, 3.2], [8.15, 3.21], "…"] },
       { "id": "pl_3", "device_id": "wled_d4e5f6", "start": 0, "count": 256, "shape": "matrix",
@@ -86,7 +87,16 @@ When a target switches from a hub effect to a WLED effect, the hub sends `"live"
 }
 ```
 
+`anchors` (optional) pins each point of a line to an LED index relative to `start`: LEDs between two points are spread evenly on that segment, so a corner lands exactly on the LED that sits in the real corner. For a closed shape the last anchor is `count`. Without anchors, LEDs are spread evenly by length. `template` records which shape template the placement came from, for the corner guide.
+
 Coordinates use any unit you like (metres work well). Effects receive them normalised to 0..1. LEDs without a placement get a temporary horizontal line, so new devices light up straight away.
+
+## Mapping by hand: LED cursor and shape templates
+
+1. Create a shape from a template (rectangle for a TV backlight, window or door; three sides; L; gable; circle; line), choosing where LED 0 sits and the direction.
+2. The corner guide asks for each corner in turn. Move the cursor with the arrow keys (Shift = 10 LEDs, Home/End) or the on-screen buttons. The hub lights the cursor LED white on the real strip (`POST api/devices/{id}/highlight`), the first LED green and the corners already set amber.
+3. Press Enter when the white LED is in the corner. That LED becomes the corner's anchor.
+4. On free lines, Enter on any LED inserts a bend point there ("Knæk her"); drag it to where the corner is.
 
 ## Camera mapping
 
@@ -98,13 +108,18 @@ Coordinates use any unit you like (metres work well). Effects receive them norma
 
 The images never leave the phone. The camera needs a secure connection (HTTPS or localhost); see the README.
 
+## Device settings
+
+The app reaches every WLED setting through the hub's proxy (`api/devices/{id}/wled/json/state|cfg|info`, `presets.json`): sync (send/receive flags and groups, ports), realtime (UDP/Hyperion, E1.31/Art-Net/DMX, timeout), nightlight, presets (apply, save with `psave`, delete with `pdel`), segments, live override, power limit, name, reboot, plus a raw JSON editor for everything else. The proxy only allows these paths. `json/cfg` writes are saved to the device's flash.
+
 ## Verified WLED facts (source: WLED source code, v0.14–v16.0.1)
 
 - DDP: UDP 4048. 10-byte header: flags `0x40|0x01(push)`, sequence 1–15, type `0x0B` RGB / `0x1B` RGBW, destination `1`, offset in bytes (u32 BE), length (u16 BE). After the first push packet, WLED only renders on push. Use 480 RGB pixels per packet.
 - `live: false` leaves realtime mode at once. `if.live.timeout` is in units of 100 ms (default 25).
 - `udpn.sgrp` / `udpn.rgrp` exist since 0.14. `udpn.recv` is read-only from 0.15.
 - mDNS: `_wled._tcp` with TXT `mac=<12 hex>`.
-- `/json/info`: `leds.count`, `leds.matrix{w,h}` (2D only), `mac`, `ver`, `live`.
+- `/json/info`: `leds.count`, `leds.matrix{w,h}` (2D only), `mac`, `ver`, `live`, `wifi{rssi,signal}`, `uptime`.
+- cfg keys used by the settings sheet: `id.name`, `id.mdns`, `hw.led.maxpwr`, `light.nl{mode,dur,tbri}`, `if.sync.send{en,dir,btn,va,hue,grp,ret}`, `if.sync.recv{bri,col,fx,pal,grp,seg,sb}`, `if.live{en,mso,rlm,port,mc,timeout,dmx{uni,addr,mode,seqskip}}`. State: `psave`, `pdel`, `rb`, `lor`, `nl`.
 
 ## Not yet verified (needs testing on real hardware)
 

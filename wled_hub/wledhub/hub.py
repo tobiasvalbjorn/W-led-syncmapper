@@ -82,6 +82,8 @@ class Hub:
         self._last_frames: Dict[str, List[Tuple[int, int, int]]] = {}
         self._tasks: List[asyncio.Task] = []
         self._apply_lock = asyncio.Lock()
+        # device id -> {"index", "start", "count", "marks", "until"} (mapping cursor)
+        self.highlights: Dict[str, dict] = {}
 
     # ------------------------------------------------------------ lifecycle
 
@@ -182,7 +184,7 @@ class Hub:
     async def _apply(self, target: Target) -> None:
         """Push a target's state to its devices (native) or the engine (hub)."""
         async with self._apply_lock:
-            devices = [d for d in target.devices if not self._in_scan(d.id)]
+            devices = [d for d in target.devices if not self._overridden(d.id)]
             state = target.state
             running = self._running.get(target.id)
 
@@ -266,7 +268,7 @@ class Hub:
             target = self.target(target_id)
             if target is None or not target.state.on:
                 continue
-            devices = [d for d in target.devices if d.id in running.devices and not self._in_scan(d.id)]
+            devices = [d for d in target.devices if d.id in running.devices and not self._overridden(d.id)]
             coords: list = []
             spans = []
             for d in devices:
@@ -290,6 +292,8 @@ class Hub:
             for d, offset, n in spans:
                 frames[d.id] = pixels[offset : offset + n]
 
+        if self.highlights:
+            frames.update(self._highlight_frames())
         if self.scan is not None:
             frames.update(self.scan.frames(self.config.devices))
 
@@ -372,7 +376,7 @@ class Hub:
         """Per-output LED ranges from /json/cfg (hw.led.ins), e.g. several strings on one ESP32."""
         device = self.config.devices[device_id]
         assert self.session is not None
-        cfg = await self.client(device)._request("GET", "/json/cfg")
+        cfg = await self.client(device).request("GET", "/json/cfg")
         outputs = []
         for i, out in enumerate(cfg.get("hw", {}).get("led", {}).get("ins", [])):
             pins = out.get("pin", [])
@@ -541,6 +545,58 @@ class Hub:
 
     def _in_scan(self, device_id: str) -> bool:
         return self.scan is not None and device_id in self.scan.device_ids
+
+    def _overridden(self, device_id: str) -> bool:
+        """Device is temporarily taken over by camera scan or mapping cursor."""
+        return self._in_scan(device_id) or device_id in self.highlights
+
+    # ------------------------------------------------------------ highlight
+
+    HIGHLIGHT_IDLE = 90.0  # seconds without updates before the cursor goes away
+
+    async def highlight(self, device_id: str, index: int, start: int = 0, count: int = 0,
+                        marks: Optional[List[int]] = None) -> None:
+        """Light one LED brightly (and a placement range dimly) on the real strip.
+
+        Used by the grid editor so you can walk along a strip with the arrow
+        keys and see on the house/TV which LED you are on.
+        """
+        device = self.config.devices[device_id]
+        fresh = device_id not in self.highlights
+        self.highlights[device_id] = {
+            "index": int(index), "start": int(start), "count": int(count) or device.led_count - int(start),
+            "marks": [int(m) for m in (marks or [])], "until": time.monotonic() + self.HIGHLIGHT_IDLE,
+        }
+        if fresh:
+            await self._send(device, realtime_state())
+
+    async def clear_highlight(self, device_id: Optional[str] = None) -> None:
+        ids = [device_id] if device_id else list(self.highlights)
+        for d in ids:
+            self.highlights.pop(d, None)
+        await self.reapply_all()
+
+    def _highlight_frames(self) -> Dict[str, List[Tuple[int, int, int]]]:
+        frames = {}
+        now = time.monotonic()
+        for device_id, hl in list(self.highlights.items()):
+            device = self.config.devices.get(device_id)
+            if device is None or now > hl["until"]:
+                self.highlights.pop(device_id, None)
+                asyncio.ensure_future(self.reapply_all())
+                continue
+            frame = [(0, 0, 0)] * device.led_count
+            for i in range(hl["start"], min(device.led_count, hl["start"] + hl["count"])):
+                frame[i] = (0, 0, 24)  # the placement's range, dim blue
+            if 0 <= hl["start"] < device.led_count:
+                frame[hl["start"]] = (0, 70, 0)  # first LED of the range, green
+            for m in hl["marks"]:
+                if 0 <= m < device.led_count:
+                    frame[m] = (120, 50, 0)  # corners already set, amber
+            if 0 <= hl["index"] < device.led_count:
+                frame[hl["index"]] = (255, 255, 255)  # the cursor
+            frames[device_id] = frame
+        return frames
 
     async def scan_start(self, device_ids: List[str], level: int = 160) -> ScanSession:
         devices = [self.config.devices[d] for d in device_ids if d in self.config.devices]
