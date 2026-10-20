@@ -2,4 +2,4 @@
 
 ## 0.1.0
 
-- Første version: rum og grupper, hub-effekter over DDP, WLED-effekter med UDP-sync, pixel-grid-editor, kamera-mapping, PWA, ingress, Supervisor- og mDNS-discovery.
+- First version: rooms and groups, hub effects over DDP, WLED effects kept in sync with UDP sync, pixel grid editor, camera mapping, PWA, ingress, Supervisor and mDNS discovery.

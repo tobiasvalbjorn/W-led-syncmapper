@@ -1,49 +1,49 @@
-# Arkitektur
+# Architecture
 
 ```
- Telefon / browser (PWA)          Home Assistant
-  ├─ Rum (Sonos-UI)                ├─ Ingress-panel i sidebaren ──┐
-  ├─ Grid-editor + live preview    └─ custom_components/wled_hub  │
-  └─ Kamera-mapping                     light.* pr. rum/gruppe    │
-        │  REST + WebSocket                │ REST + WebSocket     │
-        └──────────────┬───────────────────┘                      │
-                       ▼                                          │
-            WLED Hub (HA add-on, Python/aiohttp) ◄────────────────┘
-             ├─ Hub          rum, grupper, targets, sync-bits
-             ├─ Engine       render-loop 40 fps på det fælles canvas
-             ├─ Effects      regnbue, plasma, komet, nordlys …
-             ├─ Mapping      placements → (x, y) pr. LED
-             ├─ Scanner      binære mønstre til kamera-mapping
-             ├─ Discovery    mDNS: finder _wled._tcp, annoncerer _wledhub._tcp
+ Phone / browser (PWA)             Home Assistant
+  ├─ Rooms (Sonos-style UI)         ├─ Ingress panel in the sidebar ──┐
+  ├─ Grid editor + live preview     └─ custom_components/wled_hub     │
+  └─ Camera mapping                      light.* per room/group       │
+        │  REST + WebSocket                 │ REST + WebSocket        │
+        └──────────────┬────────────────────┘                         │
+                       ▼                                              │
+            WLED Hub (HA add-on, Python/aiohttp) ◄────────────────────┘
+             ├─ Hub          rooms, groups, targets, sync bits
+             ├─ Engine       render loop at 40 fps on the shared canvas
+             ├─ Effects      rainbow, plasma, comet, aurora …
+             ├─ Mapping      placements → (x, y) per LED
+             ├─ Scanner      binary patterns for camera mapping
+             ├─ Discovery    mDNS: finds _wled._tcp, advertises _wledhub._tcp
              └─ Store        /data/hub.json
                        │
        ┌───────────────┼──────────────────────────┐
        │ JSON API (HTTP)   DDP (UDP 4048)    UDP sync (21324, WLED↔WLED)
        ▼               ▼                          ▼
-   WLED ESP32 #1   WLED ESP32 #2   …   (flere lyskæder pr. ESP = flere outputs)
+   WLED ESP32 #1   WLED ESP32 #2   …   (several strings per ESP = several outputs)
 ```
 
-## To måder at synkronisere på
+## Two ways to synchronise
 
-| | **WLED-effekt** (`source: "wled"`) | **Hub-effekt** (`source: "hub"`) |
+| | **WLED effect** (`source: "wled"`) | **Hub effect** (`source: "hub"`) |
 |---|---|---|
-| Hvor beregnes pixels | På hver ESP32 | I hub'en |
-| Transport | JSON API én gang + WLED UDP-sync | DDP-stream, 40 fps |
-| Synkronisering | Første enhed i rummet/gruppen er sync-leder og sender på en gruppe-bit, som hub'en reserverer til netop det target (bit 2–128; bit 1 er WLED's standard og bliver ikke brugt) | Én fælles clock renderer alle pixels. Push-flaget sættes på sidste pakke i hver frame, så hver frame vises samlet |
-| Flyder på tværs af enheder | Nej, hver enhed kører effekten på sin egen strip | Ja, effekten bruger LED'ernes (x, y) på det fælles grid |
-| WiFi-belastning | Næsten ingen | ~3 bytes × LEDs × fps (1000 LEDs ≈ 120 kB/s) |
+| Where pixels are computed | On each ESP32 | In the hub |
+| Transport | JSON API once, plus WLED UDP sync | DDP stream at 40 fps |
+| Synchronisation | The first device in the room/group is the sync leader. It sends on a group bit the hub reserves for that target (bits 2–128; bit 1 is WLED's default and is left alone) | One shared clock renders every pixel. The push flag is set on the last packet of each frame, so every frame appears at once |
+| Flows across devices | No, each device runs the effect on its own strip | Yes, the effect uses each LED's (x, y) on the shared grid |
+| Wi-Fi load | Almost none | ~3 bytes × LEDs × fps (1000 LEDs ≈ 120 kB/s) |
 
-Når et target skifter fra hub- til WLED-effekt, sender hub'en `"live": false`, så enheden forlader realtime med det samme. Når hub'en stopper med at streame, går WLED selv tilbage efter `if.live.timeout`, som er 2,5 s som standard.
+When a target switches from a hub effect to a WLED effect, the hub sends `"live": false` so the device leaves realtime mode at once. When the hub stops streaming, WLED returns on its own after `if.live.timeout`, which defaults to 2.5 s.
 
-## Begreber
+## Concepts
 
-- **Device**: én WLED-controller. Den kan have flere outputs, altså lyskæder på forskellige GPIO'er. WLED lægger dem efter hinanden i ét LED-indeks, og hub'en læser intervallerne fra `/json/cfg` → `hw.led.ins[]`.
-- **Room** (rum): Sonos' "højttaler". Hver enhed er i højst ét rum.
-- **Group**: rum der er låst sammen. Gruppens tilstand gælder for alle dens rum.
-- **Target**: det man styrer. Det er en gruppe, eller et rum der ikke er i en gruppe. Hvert target er én `light`-entitet i Home Assistant.
-- **Placement**: placerer et interval af LEDs fra én enhed på griddet som `line` (polyline med knæk), `matrix` (2D-panel) eller `points` (ét punkt pr. LED, fra kamera-mapping).
+- **Device**: one WLED controller. It can have several outputs, meaning light strings on different GPIOs. WLED puts them one after another in a single LED index, and the hub reads the ranges from `/json/cfg` → `hw.led.ins[]`.
+- **Room**: the Sonos "speaker". Each device belongs to at most one room.
+- **Group**: rooms linked together. The group's state applies to all its rooms.
+- **Target**: what you control. It is either a group, or a room that is not in a group. Each target is one `light` entity in Home Assistant.
+- **Placement**: puts a range of LEDs from one device on the grid, as a `line` (polyline with corners), a `matrix` (2D panel) or `points` (one point per LED, from camera mapping).
 
-## Datamodel (`/data/hub.json`)
+## Data model (`/data/hub.json`)
 
 ```jsonc
 {
@@ -67,11 +67,11 @@ Når et target skifter fra hub- til WLED-effekt, sender hub'en `"live": false`, 
     }
   },
   "groups": {
-    "group_2cc6e313": { "id": "group_2cc6e313", "name": "Hele huset",
-                        "room_ids": ["room_carport", "room_stue"], "state": { "...": "som ovenfor" } }
+    "group_2cc6e313": { "id": "group_2cc6e313", "name": "Whole house",
+                        "room_ids": ["room_carport", "room_living"], "state": { "...": "as above" } }
   },
   "layout": {
-    "width": 20, "height": 12, "background": "data:image/jpeg;base64,… (valgfri)",
+    "width": 20, "height": 12, "background": "data:image/jpeg;base64,… (optional)",
     "placements": [
       { "id": "pl_1", "device_id": "wled_a1b2c3", "start": 0, "count": 150, "shape": "line",
         "points": [[1, 2], [6, 2], [6, 5], [1, 5], [1, 2]], "reverse": false },
@@ -86,30 +86,30 @@ Når et target skifter fra hub- til WLED-effekt, sender hub'en `"live": false`, 
 }
 ```
 
-Koordinater er i valgfri enheder (meter passer godt). Effekter får dem normaliseret til 0..1. LEDs uden placement får en midlertidig vandret linje, så nye enheder lyser med det samme.
+Coordinates use any unit you like (metres work well). Effects receive them normalised to 0..1. LEDs without a placement get a temporary horizontal line, so new devices light up straight away.
 
-## Kamera-mapping
+## Camera mapping
 
-1. Hub'en tildeler hver LED i scanningen en kode `= globalt indeks + 1`. Koden 0 betyder "ingen LED".
-2. For hver bit *k* tænder den de LEDs, hvis kode har bit *k* sat, og bagefter det inverse mønster. Det giver `2·⌈log2(N+1)⌉` billeder, fx 22 for 2000 LEDs.
-3. Telefonen sammenligner hver kamerapixel mellem mønster og inverse. Pixels der knap ændrer sig, er baggrund. Pixels med samme kode midles til LED'ens centrum.
-4. Outliers (refleksioner) frasorteres med afstand til nabo-LEDs. Huller interpoleres langs indekset.
-5. Resultatet gemmes som `points`-placements, skaleret ind i et valgt område af griddet. Flere facader scannes hver for sig.
+1. The hub gives every LED in the scan a code `= global index + 1`. Code 0 means "no LED".
+2. For each bit *k* it lights the LEDs whose code has bit *k* set, and then the inverse pattern. That takes `2·⌈log2(N+1)⌉` frames, for example 22 for 2000 LEDs.
+3. The phone compares each camera pixel between the pattern and its inverse. Pixels that barely change are background. Pixels with the same code are averaged into that LED's centre.
+4. Outliers (reflections) are rejected by their distance to neighbouring LEDs. Gaps are interpolated along the LED index.
+5. The result is saved as `points` placements, scaled into a chosen area of the grid. Scan each side of the house separately.
 
-Billederne forlader ikke telefonen. Kameraet kræver en sikker forbindelse (HTTPS eller localhost), se README.
+The images never leave the phone. The camera needs a secure connection (HTTPS or localhost); see the README.
 
-## Verificerede WLED-fakta (kilde: WLED-source v0.14–v16.0.1)
+## Verified WLED facts (source: WLED source code, v0.14–v16.0.1)
 
-- DDP: UDP 4048. Header på 10 bytes: flags `0x40|0x01(push)`, seq 1–15, type `0x0B` RGB / `0x1B` RGBW, dest `1`, offset i bytes (u32 BE), længde (u16 BE). Efter første push-pakke renderer WLED kun på push. Brug 480 RGB-pixels pr. pakke.
-- `live: false` forlader realtime med det samme. `if.live.timeout` er i enheder af 100 ms (standard 25).
-- `udpn.sgrp` / `udpn.rgrp` findes siden 0.14. `udpn.recv` er read-only fra 0.15.
-- mDNS: `_wled._tcp` med TXT `mac=<12 hex>`.
-- `/json/info`: `leds.count`, `leds.matrix{w,h}` (kun 2D), `mac`, `ver`, `live`.
+- DDP: UDP 4048. 10-byte header: flags `0x40|0x01(push)`, sequence 1–15, type `0x0B` RGB / `0x1B` RGBW, destination `1`, offset in bytes (u32 BE), length (u16 BE). After the first push packet, WLED only renders on push. Use 480 RGB pixels per packet.
+- `live: false` leaves realtime mode at once. `if.live.timeout` is in units of 100 ms (default 25).
+- `udpn.sgrp` / `udpn.rgrp` exist since 0.14. `udpn.recv` is read-only from 0.15.
+- mDNS: `_wled._tcp` with TXT `mac=<12 hex>`.
+- `/json/info`: `leds.count`, `leds.matrix{w,h}` (2D only), `mac`, `ver`, `live`.
 
-## Ikke verificeret endnu (skal testes på rigtig hardware)
+## Not yet verified (needs testing on real hardware)
 
-- Om WLED's UDP-sync holder effekt-timingen tæt nok sammen for alle effekter. Hvis ikke, kan effekten køres som hub-effekt i stedet.
-- RGBW-hvid-udtrækning til DDP.
-- `hw.led.ins`-nøglerne i `/json/cfg` på alle WLED-versioner.
-- Base-image-tagget `ghcr.io/home-assistant/base-python:3.14-alpine3.24`.
-- Om HACS accepterer et repo, der også indeholder en add-on.
+- Whether WLED's UDP sync keeps effect timing close enough for every effect. If not, the effect can be run as a hub effect instead.
+- RGBW white extraction for DDP.
+- The `hw.led.ins` keys in `/json/cfg` on every WLED version.
+- The base image tag `ghcr.io/home-assistant/base-python:3.14-alpine3.24`.
+- Whether HACS accepts a repository that also contains an add-on.
