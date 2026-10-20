@@ -9,6 +9,6 @@
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/tobiasvalbjorn/WLED-FX-mapper/issues",
   "requirements": [],
-  "version": "0.9.1",
+  "version": "0.9.2",
   "zeroconf": ["_wledhub._tcp.local."]
 }

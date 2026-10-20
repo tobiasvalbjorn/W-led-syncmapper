@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.2
+
+- Colour fields (Studio, paint, background colour …) show the chosen colour again – they were squeezed to a sliver.
+
 ## 0.9.1
 
 - Sliders can be dragged smoothly again: views no longer redraw while you drag (the hub's echo of each change used to replace the slider under your finger).

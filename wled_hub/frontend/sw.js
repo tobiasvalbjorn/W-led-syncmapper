@@ -1,6 +1,6 @@
 // Service worker: caches the app shell so the PWA opens instantly and offline.
 // API calls always go to the network (live state must never come from cache).
-const CACHE = "wled-hub-v5";
+const CACHE = "wled-hub-v6";
 const SHELL = [
   "./",
   "index.html",
