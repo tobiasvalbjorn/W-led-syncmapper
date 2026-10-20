@@ -89,8 +89,8 @@ export function openTargetSheet(store, targetId) {
   function effectsTab() {
     const effects = store.effects;
     const srcTabs = h("div", { class: "segmented" },
-      h("button", { class: effectSource === "hub" ? "active" : "", onclick: () => { effectSource = "hub"; draw(); } }, "Hub – across devices"),
-      h("button", { class: effectSource === "wled" ? "active" : "", onclick: () => { effectSource = "wled"; draw(); } }, "WLED – built-in"));
+      h("button", { class: effectSource === "hub" ? "active" : "", onclick: () => { effectSource = "hub"; draw(); } }, "Across the grid (hub)"),
+      h("button", { class: effectSource === "wled" ? "active" : "", onclick: () => { effectSource = "wled"; draw(); } }, "Per device (WLED built-in)"));
 
     const list = effectSource === "hub"
       ? effects.hub.map((e) => ({ id: e.key, name: e.name, desc: e.description }))
@@ -116,6 +116,13 @@ export function openTargetSheet(store, targetId) {
         slider({ value: eff.intensity, label: "Intensity", oninput: (intensity) => change({ effect: { intensity } }) })),
     );
     if (eff.source === "hub") {
+      const span = eff.params?.span === "room" ? "room" : "house";
+      controls.append(h("div", { class: "field" }, h("label", {}, "Effect spans"),
+        h("div", { class: "segmented", style: { margin: 0 } },
+          h("button", { class: span === "house" ? "active" : "", title: "Positions relative to every mapped LED – rooms running the same effect line up across the house",
+            onclick: () => { change({ effect: { params: { ...eff.params, span: "house" } } }); draw(); } }, "Whole house"),
+          h("button", { class: span === "room" ? "active" : "", title: "The effect fills just this room's own LEDs",
+            onclick: () => { change({ effect: { params: { ...eff.params, span: "room" } } }); draw(); } }, "This room only"))));
       const def = effects.hub.find((e) => e.key === eff.id);
       for (const [key, p] of Object.entries(def?.params || {})) {
         controls.append(h("div", { class: "field" }, h("label", {}, p.label || key),
@@ -129,8 +136,8 @@ export function openTargetSheet(store, targetId) {
       controls.append(h("div", { class: "field" }, h("label", {}, "Palette"), sel));
     }
     const note = effectSource === "hub"
-      ? "Hub effects are rendered by the hub on the shared grid and streamed to all devices at once (DDP), so they flow across the light strings."
-      : "WLED effects run on the devices themselves. The hub keeps them in step with WLED's UDP sync.";
+      ? "Rendered by the hub on your grid and sent to every mapped LED at once, so an effect runs across all devices – a line sweeps from one end of the house to the other."
+      : "WLED's own effects run on each device by itself (each light string on its own), kept in time with WLED sync. They do not follow the grid – use an effect from \"Across the grid\" for that.";
     return h("div", {}, srcTabs, h("p", { class: "muted" }, note), search, grid, controls);
   }
 

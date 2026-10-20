@@ -238,3 +238,24 @@ def test_plain_cursor_is_black_with_white_led():
                            "until": float("inf")}
     frame = hub._highlight_frames()["d"]
     assert frame == [(0, 0, 0)] * 3 + [(255, 255, 255)] + [(0, 0, 0)] * 2
+
+
+def test_fit_to_box_spans_the_lit_area():
+    from wledhub.mapping import bounding_box, fit_to_box
+
+    coords = [(0.4, 0.2), (0.6, 0.2), (0.5, 0.3)]
+    fitted = fit_to_box(coords, bounding_box(coords))
+    assert fitted == [(0.0, 0.0), (1.0, 0.0), (0.5, 1.0)]
+    flat = fit_to_box([(0.1, 0.5), (0.3, 0.5)], bounding_box([(0.1, 0.5), (0.3, 0.5)]))
+    assert flat == [(0.0, 0.5), (1.0, 0.5)]
+
+
+def test_line_sweep_moves_across():
+    effect = fx.create("line_sweep")
+    coords = [(i / 19, 0.5) for i in range(20)]
+    opts = {"speed": 128, "intensity": 128, "color": [255, 255, 255], "color2": [0, 0, 0], "params": {}}
+    lit_at = []
+    for t in (1.0, 2.0, 3.0):
+        px = effect.render(coords, t, opts)
+        lit_at.append(max(range(20), key=lambda i: px[i][0]))
+    assert lit_at[0] < lit_at[1] < lit_at[2]  # the line moves left -> right

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.0
+
+- Hub effects span the mapped LEDs – from the outermost lit LED on one side of the house to the other – instead of the whole canvas, so an effect runs across every device. Rooms running the same effect stay in line with each other.
+- "Effect spans: Whole house / This room only" per room for hub effects.
+- New hub effect "Line sweep": a line that sweeps across the whole house, with direction and width.
+- Effect tabs renamed to "Across the grid (hub)" and "Per device (WLED built-in)", with a clearer explanation of the difference.
+
 ## 0.7.1
 
 - Much less lag while mapping on a slow connection (e.g. through Home Assistant on a phone): highlight requests no longer queue up – only the newest cursor position is sent.

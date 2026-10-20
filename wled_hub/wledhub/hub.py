@@ -33,7 +33,7 @@ import aiohttp
 
 from . import effects as fx
 from .ddp import DDPSender
-from .mapping import build_pixel_maps, mapped_ranges
+from .mapping import bounding_box, build_pixel_maps, fit_to_box, mapped_ranges
 from .models import Device, Group, HubConfig, LightState, Room, new_id, slugify
 from .scanner import ScanSession
 from .store import Store
@@ -288,6 +288,9 @@ class Hub:
     def rebuild_maps(self) -> None:
         devices = sorted(self.config.devices.values(), key=lambda d: d.name)
         self._pixel_maps = build_pixel_maps(devices, self.config.layout)
+        # The area of every mapped LED: hub effects span this by default, so a
+        # sweep runs from one end of the house to the other.
+        self._house_box = bounding_box(c for pm in self._pixel_maps.values() for c in pm)
 
     async def _render_loop(self) -> None:
         next_preview = 0.0
@@ -324,6 +327,11 @@ class Hub:
                     frames[d.id] = [(0, 0, 0)] * n
                 continue
             state = target.state
+            # "house" (default): effect positions relative to all mapped LEDs,
+            # so rooms running the same effect line up across the house.
+            # "room": the effect spans just this room/group's own LEDs.
+            local = state.effect.params.get("span") == "room"
+            coords = fit_to_box(coords, bounding_box(coords) if local else self._house_box)
             opts = {
                 "speed": state.effect.speed,
                 "intensity": state.effect.intensity,

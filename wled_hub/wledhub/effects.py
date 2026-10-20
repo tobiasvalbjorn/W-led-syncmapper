@@ -207,6 +207,31 @@ class Comet(Effect):
 
 
 @register
+class LineSweep(Effect):
+    key = "line_sweep"
+    name = "Line sweep"
+    description = "A bright line that sweeps across the whole house"
+    params = {
+        "angle": {"type": "range", "min": 0, "max": 359, "default": 0, "label": "Direction"},
+        "width": {"type": "range", "min": 1, "max": 50, "default": 6, "label": "Line width %"},
+    }
+
+    def render(self, coords, t, opts):
+        dx, dy = _direction(self.param(opts, "angle"))
+        span = abs(dx) + abs(dy) or 1.0
+        offset = min(0.0, dx) + min(0.0, dy)
+        width = max(0.005, self.param(opts, "width") / 100.0)
+        # travels 0 -> 1 across the lit area, with a short pause off each end
+        pos = (t * self.speed_factor(opts["speed"]) * 0.5) % (1.0 + 4 * width) - 2 * width
+        c, bg = opts["color"], opts["color2"]
+        out = []
+        for x, y in coords:
+            d = abs(((x * dx + y * dy) - offset) / span - pos)
+            out.append(mix(bg, c, 1.0 - d / width) if d < width else tuple(bg))  # type: ignore[arg-type]
+        return out
+
+
+@register
 class Twinkle(Effect):
     key = "twinkle"
     name = "Twinkle"

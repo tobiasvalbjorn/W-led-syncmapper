@@ -9,6 +9,6 @@
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/tobiasvalbjorn/W-led-syncmapper/issues",
   "requirements": [],
-  "version": "0.7.1",
+  "version": "0.8.0",
   "zeroconf": ["_wledhub._tcp.local."]
 }

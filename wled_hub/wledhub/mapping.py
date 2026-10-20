@@ -208,5 +208,33 @@ def mapped_ranges(device: Device, layout: Layout) -> List[Tuple[int, int]]:
     return merged
 
 
+Box = Tuple[float, float, float, float]
+
+
+def bounding_box(coords) -> Optional[Box]:
+    """(min_x, min_y, span_x, span_y) of the given coords, ignoring None."""
+    pts = [c for c in coords if c is not None]
+    if not pts:
+        return None
+    xs = [c[0] for c in pts]
+    ys = [c[1] for c in pts]
+    return min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)
+
+
+def fit_to_box(coords: List[Coord], box: Optional[Box]) -> List[Coord]:
+    """Stretch coords so the box becomes 0..1 on both axes.
+
+    Effects then span exactly the lit area – the whole house, or one room –
+    however big the canvas is. A flat box (a single straight strip) keeps
+    0.5 on the flat axis.
+    """
+    if box is None:
+        return coords
+    x0, y0, sx, sy = box
+    fx = (lambda x: (x - x0) / sx) if sx > 1e-9 else (lambda x: 0.5)
+    fy = (lambda y: (y - y0) / sy) if sy > 1e-9 else (lambda y: 0.5)
+    return [(fx(x), fy(y)) for x, y in coords]
+
+
 def build_pixel_maps(devices: List[Device], layout: Layout) -> Dict[str, List[Optional[Coord]]]:
     return {d.id: device_pixel_map(d, layout) for d in devices}
