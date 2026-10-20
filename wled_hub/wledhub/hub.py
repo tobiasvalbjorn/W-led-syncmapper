@@ -269,13 +269,17 @@ class Hub:
             if target is None or not target.state.on:
                 continue
             devices = [d for d in target.devices if d.id in running.devices and not self._overridden(d.id)]
+            # Only LEDs that are drawn on the grid are rendered; the rest stay off.
             coords: list = []
             spans = []
             for d in devices:
                 pmap = self._pixel_maps.get(d.id, [])
-                spans.append((d, len(coords), len(pmap)))
-                coords.extend(pmap)
+                lit = [i for i, c in enumerate(pmap) if c is not None]
+                spans.append((d, len(coords), lit, len(pmap)))
+                coords.extend(pmap[i] for i in lit)
             if not coords:
+                for d, _offset, _lit, n in spans:
+                    frames[d.id] = [(0, 0, 0)] * n
                 continue
             state = target.state
             opts = {
@@ -289,8 +293,11 @@ class Hub:
             k = state.brightness / 255.0
             if k < 1.0:
                 pixels = [(int(r * k), int(g * k), int(b * k)) for r, g, b in pixels]
-            for d, offset, n in spans:
-                frames[d.id] = pixels[offset : offset + n]
+            for d, offset, lit, n in spans:
+                frame = [(0, 0, 0)] * n
+                for k, i in enumerate(lit):
+                    frame[i] = pixels[offset + k]
+                frames[d.id] = frame
 
         if self.highlights:
             frames.update(self._highlight_frames())
@@ -554,18 +561,23 @@ class Hub:
 
     HIGHLIGHT_IDLE = 90.0  # seconds without updates before the cursor goes away
 
-    async def highlight(self, device_id: str, index: int, start: int = 0, count: int = 0,
-                        marks: Optional[List[int]] = None) -> None:
-        """Light one LED brightly (and a placement range dimly) on the real strip.
+    async def highlight(self, device_id: str, index: int = -1, start: int = 0, count: int = 0,
+                        marks: Optional[List[int]] = None,
+                        ranges: Optional[List[List[int]]] = None) -> None:
+        """Show the grid editor's selection on the real strip.
 
-        Used by the grid editor so you can walk along a strip with the arrow
-        keys and see on the house/TV which LED you are on.
+        Cursor mode (index >= 0): one LED bright white, the placement range
+        dim blue, so you can walk along a strip with the arrow keys.
+        Part mode (ranges): whole LED ranges bright, e.g. the part or lamp
+        under the mouse in the grid; everything else on the device off.
         """
         device = self.config.devices[device_id]
         fresh = device_id not in self.highlights
         self.highlights[device_id] = {
             "index": int(index), "start": int(start), "count": int(count) or device.led_count - int(start),
-            "marks": [int(m) for m in (marks or [])], "until": time.monotonic() + self.HIGHLIGHT_IDLE,
+            "marks": [int(m) for m in (marks or [])],
+            "ranges": [(int(r[0]), int(r[1])) for r in (ranges or [])],
+            "until": time.monotonic() + self.HIGHLIGHT_IDLE,
         }
         if fresh:
             await self._send(device, realtime_state())
@@ -586,6 +598,12 @@ class Hub:
                 asyncio.ensure_future(self.reapply_all())
                 continue
             frame = [(0, 0, 0)] * device.led_count
+            if hl.get("ranges"):
+                for start, count in hl["ranges"]:
+                    for i in range(max(0, start), min(device.led_count, start + count)):
+                        frame[i] = (200, 200, 200)
+                frames[device_id] = frame
+                continue
             for i in range(hl["start"], min(device.led_count, hl["start"] + hl["count"])):
                 frame[i] = (0, 0, 24)  # the placement's range, dim blue
             if 0 <= hl["start"] < device.led_count:

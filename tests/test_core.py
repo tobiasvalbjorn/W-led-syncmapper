@@ -65,9 +65,17 @@ def test_two_outputs_on_one_device():
     assert pmap == [(0, 0), (1, 0), (0, 1), (1, 1)]
 
 
-def test_unmapped_leds_get_fallback():
+def test_unplaced_device_gets_fallback_line():
     pmap = device_pixel_map(Device(id="d", name="d", host="x", led_count=3), Layout())
     assert [x for x, _ in pmap] == [0, 0.5, 1]
+
+
+def test_only_mapped_leds_take_part_once_placed():
+    layout = Layout(width=10, height=10, placements=[
+        Placement(id="a", device_id="d", start=1, count=2, points=[[0, 0], [10, 0]]),
+    ])
+    pmap = device_pixel_map(Device(id="d", name="d", host="x", led_count=5), layout)
+    assert pmap == [None, (0, 0), (1, 0), None, None]
 
 
 def test_all_effects_render():
@@ -140,3 +148,16 @@ def test_highlight_frame():
     assert frame[4] == (120, 50, 0)
     assert frame[5] == (0, 0, 24)
     assert frame[0] == (0, 0, 0) and frame[7] == (0, 0, 0)
+
+
+def test_highlight_ranges_light_whole_parts():
+    from wledhub.hub import Hub
+
+    class FakeStore:
+        config = HubConfig.from_dict({"devices": {"d": {"id": "d", "name": "Lampe", "host": "x", "led_count": 6}}})
+
+    hub = Hub(FakeStore(), "hub", "0")
+    hub.highlights["d"] = {"index": -1, "start": 0, "count": 6, "marks": [], "ranges": [(1, 2), (4, 1)],
+                           "until": float("inf")}
+    frame = hub._highlight_frames()["d"]
+    assert [px[0] > 0 for px in frame] == [False, True, True, False, True, False]

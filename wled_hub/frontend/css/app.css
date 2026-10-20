@@ -159,3 +159,18 @@ input[type=range]::-moz-range-thumb { width: 24px; height: 24px; border-radius: 
 .row > .field { flex: 1; min-width: 0; }
 .field input, .field select { width: 100%; min-width: 0; }
 [hidden] { display: none !important; }
+
+/* ------------------------------------------------------------ grid editor layout */
+.grid-layout { display: flex; flex-direction: column; gap: 12px; }
+.grid-side .grid-toolbar:first-child { margin-top: 0; }
+@media (min-width: 1000px) {
+  body[data-view="grid"] main { max-width: none; padding-bottom: 0; }
+  .grid-layout {
+    flex-direction: row-reverse; align-items: stretch;
+    /* full screen height between the top bar and the tab bar */
+    height: calc(100vh - 70px - var(--tabbar-h) - env(safe-area-inset-bottom) - 16px);
+  }
+  .grid-side { width: 380px; flex: none; overflow-y: auto; padding-right: 4px; }
+  .grid-main { flex: 1; min-width: 0; display: flex; }
+  .grid-main .grid-wrap { flex: 1; display: flex; flex-direction: column; justify-content: center; }
+}

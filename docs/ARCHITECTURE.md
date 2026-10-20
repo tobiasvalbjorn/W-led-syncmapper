@@ -89,7 +89,9 @@ When a target switches from a hub effect to a WLED effect, the hub sends `"live"
 
 `anchors` (optional) pins each point of a line to an LED index relative to `start`: LEDs between two points are spread evenly on that segment, so a corner lands exactly on the LED that sits in the real corner. For a closed shape the last anchor is `count`. Without anchors, LEDs are spread evenly by length. `template` records which shape template the placement came from, for the corner guide.
 
-Coordinates use any unit you like (metres work well). Effects receive them normalised to 0..1. LEDs without a placement get a temporary horizontal line, so new devices light up straight away.
+Coordinates use any unit you like (metres work well). Effects receive them normalised to 0..1. Once a device has at least one placement, only the LEDs drawn on the grid take part in hub effects; the rest stay off. A device with no placement at all gets a temporary horizontal line, so a new device lights up straight away.
+
+A lamp whose strip is split into parts (for example LEDs 0–55 on the outside and 56–157 on the inside) is simply one device with several placements, each with its own `start`, `count` and optional `name`. The grid editor can split a part at the LED cursor, move, scale and rotate a part or the whole lamp, and light a part or lamp on the real device while you hover over it (`POST api/devices/{id}/highlight {"ranges": [[start, count]]}`).
 
 ## Mapping by hand: LED cursor and shape templates
 

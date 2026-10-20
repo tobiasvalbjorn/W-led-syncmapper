@@ -6,7 +6,7 @@ layout's width/height) so effects never need to know the house's size.
 from __future__ import annotations
 
 import math
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from .models import Device, Layout, Placement
 
@@ -117,31 +117,34 @@ def placement_coords(p: Placement, device_leds: int) -> List[Coord]:
     return coords
 
 
-def device_pixel_map(device: Device, layout: Layout, fallback_row: int = 0) -> List[Coord]:
-    """Normalised (x, y) for every LED on a device.
+def device_pixel_map(device: Device, layout: Layout, fallback_row: int = 0) -> List[Optional[Coord]]:
+    """Normalised (x, y) for every LED on a device, or None for "stay dark".
 
-    LEDs without a placement get a fallback position: a horizontal line in
-    their own row, so new devices still show something sensible.
+    Once a device has at least one placement, only the LEDs drawn on the grid
+    take part in hub effects; the rest are None and stay off. A device with no
+    placement at all gets a fallback horizontal line in its own row, so a new
+    device still shows something before it is mapped.
     """
     n = device.led_count
     w = layout.width or 1.0
     h = layout.height or 1.0
-    result: List[Coord] = [(-1.0, -1.0)] * n
+    result: List[Optional[Coord]] = [None] * n
+    placed = False
 
     for p in layout.placements:
         if p.device_id != device.id:
             continue
+        placed = True
         for offset, (x, y) in enumerate(placement_coords(p, n)):
             idx = p.start + offset
             if 0 <= idx < n:
                 result[idx] = (x / w, y / h)
 
-    row_y = min(0.95, 0.05 + 0.1 * fallback_row)
-    for i, (x, _y) in enumerate(result):
-        if x < 0:
-            result[i] = (i / max(1, n - 1), row_y)
+    if not placed:
+        row_y = min(0.95, 0.05 + 0.1 * fallback_row)
+        result = [(i / max(1, n - 1), row_y) for i in range(n)]
     return result
 
 
-def build_pixel_maps(devices: List[Device], layout: Layout) -> Dict[str, List[Coord]]:
+def build_pixel_maps(devices: List[Device], layout: Layout) -> Dict[str, List[Optional[Coord]]]:
     return {d.id: device_pixel_map(d, layout, row) for row, d in enumerate(devices)}

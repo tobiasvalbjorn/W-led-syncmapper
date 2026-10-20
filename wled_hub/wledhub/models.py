@@ -196,6 +196,7 @@ class Placement:
 
     id: str
     device_id: str
+    name: str = ""  # e.g. "Ydre" / "Indre" when one strip is split into parts
     start: int = 0  # first LED index on the device
     count: int = 0  # number of LEDs (0 = rest of the device)
     shape: str = "line"  # "line" | "matrix" | "points"

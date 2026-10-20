@@ -26,6 +26,7 @@ let link = null;
 function show(tab) {
   if (!VIEWS[tab]) tab = "rooms";
   current = tab;
+  document.body.dataset.view = tab; // lets CSS give the grid editor the full width
   document.querySelectorAll("#tabbar button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
   document.getElementById("title").textContent = VIEWS[tab].title;
   document.getElementById("topbar-actions").replaceChildren();

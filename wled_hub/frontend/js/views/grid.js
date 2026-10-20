@@ -25,6 +25,9 @@ export function render(view, store, actions) {
   let cursor = null; // LED index relative to the placement, null = cursor off
   let guide = null; // { steps: [point indexes], k: position in steps }
   let highlighted = null; // device id currently showing the cursor on the strip
+  let lampMode = false; // select/drag/highlight the whole lamp (all parts of a device)
+  let hoverLight = false; // highlight mode: the part/lamp under the mouse lights up for real
+  let hoverIds = new Set(); // placement ids lit by highlight mode
 
   actions.append(
     h("button", { class: "icon-btn", title: "Kamera-mapping", onclick: () => openScanner(store) }, icon("camera")),
@@ -34,19 +37,34 @@ export function render(view, store, actions) {
   const ctx = canvas.getContext("2d");
   const form = h("div");
   const saveBtn = h("button", { class: "btn", onclick: save }, "Gem layout");
-  view.replaceChildren(
-    h("div", { class: "grid-wrap" }, canvas),
+  const bgRemoveBtn = h("button", { class: "btn secondary small", hidden: true, onclick: () => {
+    layout.background = null; loadBackground(); markDirty();
+  } }, "Fjern baggrund");
+  const modeBtnPart = h("button", { class: "active", onclick: () => setLampMode(false), title: "Vælg, flyt og highlight én del" }, "Del");
+  const modeBtnLamp = h("button", { onclick: () => setLampMode(true), title: "Vælg, flyt og highlight alle dele af lampen" }, "Hele lampen");
+  const hoverBtn = h("button", { class: "btn secondary small", onclick: () => setHoverLight(!hoverLight),
+    title: "Lyser den del/lampe op i virkeligheden, som musen er over eller du trykker på" }, "Highlight: fra");
+  // Phone: grid on top, tools below. PC (wide screen): tools in a scrolling
+  // column on the left, the grid filling the rest of the screen on the right.
+  const gridWrap = h("div", { class: "grid-wrap" }, canvas);
+  view.replaceChildren(h("div", { class: "grid-layout" },
+    h("div", { class: "grid-main" }, gridWrap),
+    h("aside", { class: "grid-side" },
     h("div", { class: "grid-toolbar" },
       h("button", { class: "btn secondary small", onclick: templateSheet }, "+ Form / skabelon"),
       h("button", { class: "btn secondary small", onclick: addPlacement }, "+ Linje"),
       h("button", { class: "btn secondary small", onclick: importOutputs }, "Importér outputs"),
       h("button", { class: "btn secondary small", onclick: autoMatrix }, "Auto 2D-matrix"),
       h("button", { class: "btn secondary small", onclick: () => setBackground() }, "Baggrundsbillede"),
+      bgRemoveBtn,
       h("button", { class: "btn secondary small", onclick: () => fitSelected() }, "Zoom til valgt"),
       h("button", { class: "btn secondary small", onclick: () => zoomTo(1) }, "Vis alt"),
       saveBtn),
-    form,
-  );
+    h("div", { class: "grid-toolbar" },
+      h("div", { class: "segmented", style: { margin: 0 } }, modeBtnPart, modeBtnLamp),
+      hoverBtn),
+    form)));
+  const wide = window.matchMedia("(min-width: 1000px)");
 
   const devices = () => store.config.devices;
   const colorFor = (deviceId) => PALETTE[Object.keys(devices()).indexOf(deviceId) % PALETTE.length];
@@ -59,7 +77,9 @@ export function render(view, store, actions) {
   function resize() {
     const dpr = window.devicePixelRatio || 1;
     const w = canvas.clientWidth;
-    const hgt = Math.min(window.innerHeight * 0.55, (w * layout.height) / layout.width);
+    const hgt = wide.matches
+      ? Math.max(200, gridWrap.clientHeight - 16) // fill the right-hand column
+      : Math.min(window.innerHeight * 0.55, (w * layout.height) / layout.width);
     canvas.style.height = `${hgt}px`;
     canvas.width = w * dpr; canvas.height = hgt * dpr;
     scale = Math.min(canvas.width / layout.width, canvas.height / layout.height) * zoom;
@@ -142,12 +162,30 @@ export function render(view, store, actions) {
           dark = R + G + B < 90;
         } else ctx.fillStyle = colorFor(p.device_id);
         ctx.beginPath(); ctx.arc(px, py, r, 0, 2 * Math.PI); ctx.fill();
-        if (dark) { // keep unlit LEDs visible on the dark canvas
+        if (hoverIds.has(p.id)) { // lit by highlight mode
+          ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.arc(px, py, r + 2.5, 0, 2 * Math.PI); ctx.stroke();
+        } else if (dark) { // keep unlit LEDs visible on the dark canvas
           ctx.strokeStyle = "rgba(255,255,255,.28)"; ctx.lineWidth = 1;
           ctx.stroke();
         }
       });
-      if (p.id !== selected) continue;
+      const inLamp = lampMode && sel()?.device_id === p.device_id;
+      if (p.name && (p.id === selected || inLamp || hoverIds.has(p.id)) && coords.length) {
+        const [x, y] = toPx(coords[Math.floor(coords.length / 2)]);
+        ctx.fillStyle = "#fff"; ctx.fillText(p.name, x + 8 * dpr, y + 4 * dpr);
+      }
+      if (p.id !== selected && !inLamp) continue;
+      if (p.id !== selected) { // other parts of the selected lamp: outline only
+        ctx.strokeStyle = colorFor(p.device_id); ctx.lineWidth = 1.5 * dpr; ctx.setLineDash([2 * dpr, 4 * dpr]);
+        if (p.shape === "line") {
+          ctx.beginPath();
+          p.points.forEach((pt, i) => { const [x, y] = toPx(pt); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+          ctx.stroke();
+        }
+        ctx.setLineDash([]);
+        continue;
+      }
 
       ctx.strokeStyle = colorFor(p.device_id);
       ctx.lineWidth = 2 * dpr;
@@ -188,8 +226,9 @@ export function render(view, store, actions) {
 
   // --- LED cursor ---------------------------------------------------------
 
+  let inflight = Promise.resolve(); // last highlight request, so a stop never overtakes it
   const sendHighlight = throttled((deviceId, payload) => {
-    post(`devices/${deviceId}/highlight`, payload).catch((e) => toast(e.message));
+    inflight = inflight.then(() => post(`devices/${deviceId}/highlight`, payload)).catch((e) => toast(e.message));
   }, 60);
 
   function syncHighlight() {
@@ -203,15 +242,51 @@ export function render(view, store, actions) {
     sendHighlight(p.device_id, { index: abs(cursor), start, count: n, marks });
   }
 
+  // Highlight mode: light the whole part (or lamp) on the real device.
+  function partsFor(p) {
+    return lampMode ? layout.placements.filter((q) => q.device_id === p.device_id) : [p];
+  }
+
+  function lightParts(parts) {
+    const ids = new Set(parts.map((q) => q.id));
+    if ([...ids].join() === [...hoverIds].join()) return;
+    hoverIds = ids;
+    draw();
+    if (!parts.length) return stopHighlight();
+    const deviceId = parts[0].device_id;
+    if (highlighted && highlighted !== deviceId) stopHighlight();
+    highlighted = deviceId;
+    sendHighlight(deviceId, { ranges: parts.map((q) => [q.start || 0, countOf(q)]) });
+  }
+
+  function setHoverLight(on) {
+    hoverLight = on;
+    hoverBtn.textContent = on ? "Highlight: til" : "Highlight: fra";
+    hoverBtn.classList.toggle("secondary", !on);
+    if (!on) { hoverIds = new Set(); stopHighlight(); draw(); }
+    else if (cursor !== null) cursorOff();
+  }
+
+  function setLampMode(on) {
+    lampMode = on;
+    modeBtnPart.classList.toggle("active", !on);
+    modeBtnLamp.classList.toggle("active", on);
+    hoverIds = new Set();
+    draw(); drawForm();
+  }
+
   function stopHighlight() {
+    sendHighlight.cancel(); // a queued highlight must not arrive after the stop
     if (!highlighted) return;
-    del(`devices/${highlighted}/highlight`).catch(() => {});
+    const deviceId = highlighted;
+    inflight = inflight.then(() => del(`devices/${deviceId}/highlight`)).catch(() => {});
     highlighted = null;
   }
 
   function setCursor(i) {
     const p = sel();
     if (!p) return;
+    if (hoverLight) setHoverLight(false); // the cursor uses the strip itself
     const n = countOf(p);
     cursor = Math.max(0, Math.min(n - 1, i));
     syncHighlight(); draw(); updateCursorLabel();
@@ -314,11 +389,83 @@ export function render(view, store, actions) {
           ? h("button", { class: "btn small", onclick: pinCorner }, "Hjørnet er her (Enter)")
           : p.shape === "line" ? h("button", { class: "btn small", onclick: bendHere }, "Knæk her (Enter)") : null,
         guide ? b("Spring hjørne over", () => { guide.k++; if (guide.k >= guide.steps.length) guide = null; draw(); drawForm(); }) : null,
+        p.shape !== "matrix" ? b("Del her", splitHere, "Del lyskæden i to dele ved markøren – fx ydre og indre ring") : null,
         b("Luk markør (Esc)", cursorOff)),
       h("p", { class: "muted", style: { margin: "8px 0 0", fontSize: "13px" } },
         "Piletaster flytter 1 LED, Shift+pil flytter 10. Hvid = markør, grøn = første LED, orange = hjørner der er sat."));
     updateCursorLabel();
     return panel;
+  }
+
+  // Scale / rotate the selected part (or every part of the lamp in lamp mode)
+  // around the centre of the parts together – e.g. shrink the inner ring.
+  function transformParts(parts, k, degrees) {
+    const pts = parts.flatMap((q) => (q.shape === "matrix"
+      ? [[q.x, q.y], [q.x + q.width, q.y + q.height]] : q.points));
+    if (!pts.length) return;
+    const xs = pts.map((q) => q[0]), ys = pts.map((q) => q[1]);
+    const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+    const a = (degrees * Math.PI) / 180, cos = Math.cos(a), sin = Math.sin(a);
+    const tf = ([x, y]) => {
+      const dx = (x - cx) * k, dy = (y - cy) * k;
+      return [+(cx + dx * cos - dy * sin).toFixed(4), +(cy + dx * sin + dy * cos).toFixed(4)];
+    };
+    for (const q of parts) {
+      if (q.shape === "matrix") {
+        const [x0, y0] = tf([q.x, q.y]);
+        q.width *= k; q.height *= k; q.x = x0; q.y = y0; // matrices scale but do not rotate
+      } else {
+        q.points = q.points.map(tf);
+      }
+    }
+    markDirty(); draw();
+  }
+
+  function transformRow(p) {
+    const parts = () => partsFor(p);
+    const b = (label, fn, title) => h("button", { class: "btn small secondary", title, onclick: fn }, label);
+    return h("div", { class: "field" },
+      h("label", {}, lampMode ? "Størrelse og rotation – hele lampen" : "Størrelse og rotation – denne del"),
+      h("div", { class: "row", style: { flexWrap: "wrap", gap: "6px" } },
+        b("− 10 %", () => transformParts(parts(), 0.9, 0), "Mindre"),
+        b("− 2 %", () => transformParts(parts(), 0.98, 0), "Lidt mindre"),
+        b("+ 2 %", () => transformParts(parts(), 1.02, 0), "Lidt større"),
+        b("+ 10 %", () => transformParts(parts(), 1.1, 0), "Større"),
+        b("⟲ 15°", () => transformParts(parts(), 1, -15), "Rotér mod uret"),
+        b("⟳ 15°", () => transformParts(parts(), 1, 15), "Rotér med uret"),
+        b("Spejl ↔", () => {
+          for (const q of parts()) if (q.shape !== "matrix") {
+            const xs = q.points.map((v) => v[0]), mid = (Math.min(...xs) + Math.max(...xs)) / 2;
+            q.points = q.points.map(([x, y]) => [2 * mid - x, y]);
+          }
+          markDirty(); draw();
+        }, "Spejlvend vandret")));
+  }
+
+  // Split the selected part in two at the cursor: LEDs before the cursor stay,
+  // the cursor LED and the rest become a new part you can place separately.
+  function splitHere() {
+    const p = sel();
+    if (!p || cursor === null) return;
+    const n = countOf(p);
+    const led = p.reverse ? n - cursor : cursor;
+    if (led <= 0 || led >= n) return toast("Flyt markøren ind på lyskæden – ikke første LED");
+    const start = p.start || 0;
+    const second = {
+      ...structuredClone(p),
+      id: `pl_${Math.random().toString(16).slice(2, 10)}`,
+      start: start + led, count: n - led, anchors: [], template: "",
+      name: p.name ? `${p.name} 2` : "Del 2",
+      points: p.points.map(([x, y]) => [x, y + layout.height * 0.04]),
+      y: (p.y || 0) + layout.height * 0.04,
+    };
+    p.count = led; p.anchors = []; p.template = "";
+    if (!p.name) p.name = "Del 1";
+    layout.placements.splice(layout.placements.indexOf(p) + 1, 0, second);
+    cursorOff();
+    selected = second.id;
+    markDirty(); draw(); drawForm();
+    toast(`Delt: LED ${start}–${start + led - 1} og LED ${start + led}–${start + n - 1}. Flyt den nye del på plads.`);
   }
 
   function startGuide() {
@@ -347,32 +494,32 @@ export function render(view, store, actions) {
       const i = hs.findIndex((hp) => Math.hypot(hp[0] - pt[0], hp[1] - pt[1]) < tol);
       if (i >= 0) { drag = { p, i, last: pt }; canvas.setPointerCapture(e.pointerId); return; }
     }
-    // select nearest placement; with the cursor on, jump to the tapped LED
-    let best = null, bestI = -1, bestD = tol * 1.5;
-    for (const q of layout.placements) {
-      const d = devices()[q.device_id];
-      if (!d) continue;
-      placementCoords(q, d.led_count).forEach((c, i) => {
-        const dist = Math.hypot(c[0] - pt[0], c[1] - pt[1]);
-        if (dist < bestD) { bestD = dist; best = q; bestI = i; }
-      });
-    }
+    // select the part under the pointer; with the cursor on, jump to the tapped LED
+    const { p: best, i: bestI } = hitTest(pt, tol);
+    if (best && hoverLight) lightParts(partsFor(best));
     if (!best) {
       if (zoom > 1) { drag = { pan: true, last: [e.clientX, e.clientY] }; canvas.setPointerCapture(e.pointerId); }
       return;
     }
-    if (cursor !== null && best.id === selected) {
+    if (cursor !== null && best.id === selected && bestI >= 0) {
       setCursor(best.reverse ? countOf(best) - 1 - bestI : bestI);
       return;
     }
     if (best.id !== selected) { stopHighlight(); cursor = null; guide = null; }
     selected = best.id;
-    drag = { p: best, i: -1, last: pt }; // drag whole placement
+    drag = { p: best, i: -1, last: pt, parts: partsFor(best) }; // drag the part, or the whole lamp
     canvas.setPointerCapture(e.pointerId);
     draw(); drawForm();
   });
   canvas.addEventListener("pointermove", (e) => {
-    if (!drag) return;
+    if (!drag) {
+      if (hoverLight && e.pointerType === "mouse") {
+        const tol = 14 / scale * (canvas.width / canvas.getBoundingClientRect().width);
+        const { p } = hitTest(fromEvent(e), tol);
+        lightParts(p ? partsFor(p) : []);
+      }
+      return;
+    }
     if (drag.pan) {
       const k = (canvas.width / canvas.getBoundingClientRect().width) / scale;
       const [cx, cy] = center || [layout.width / 2, layout.height / 2];
@@ -385,8 +532,10 @@ export function render(view, store, actions) {
     const dx = pt[0] - drag.last[0], dy = pt[1] - drag.last[1];
     drag.last = pt;
     if (i < 0) {
-      if (p.shape === "matrix") { p.x += dx; p.y += dy; }
-      else p.points = p.points.map(([x, y]) => [x + dx, y + dy]);
+      for (const q of drag.parts || [p]) {
+        if (q.shape === "matrix") { q.x += dx; q.y += dy; }
+        else q.points = q.points.map(([x, y]) => [x + dx, y + dy]);
+      }
     } else if (p.shape === "matrix") {
       if (i === 0) { p.x += dx; p.y += dy; p.width -= dx; p.height -= dy; }
       else { p.width += dx; p.height += dy; }
@@ -401,6 +550,37 @@ export function render(view, store, actions) {
     markDirty(); draw();
   });
   canvas.addEventListener("pointerup", () => { if (drag && !drag.pan) drawForm(); drag = null; });
+  canvas.addEventListener("pointerleave", (e) => { if (hoverLight && e.pointerType === "mouse" && !drag) lightParts([]); });
+
+  // Nearest LED within tolerance, else a line segment of a placement, else a matrix area.
+  function hitTest(pt, tol) {
+    let best = null, bestI = -1, bestD = tol * 1.5;
+    for (const q of layout.placements) {
+      const d = devices()[q.device_id];
+      if (!d) continue;
+      placementCoords(q, d.led_count).forEach((c, i) => {
+        const dist = Math.hypot(c[0] - pt[0], c[1] - pt[1]);
+        if (dist < bestD) { bestD = dist; best = q; bestI = i; }
+      });
+    }
+    if (best) return { p: best, i: bestI };
+    for (const q of layout.placements) {
+      if (q.shape === "line") {
+        for (let k = 0; k < q.points.length - 1; k++) {
+          if (segDist(pt, q.points[k], q.points[k + 1]) < tol) return { p: q, i: -1 };
+        }
+      } else if (q.shape === "matrix" && pt[0] >= q.x && pt[0] <= q.x + q.width && pt[1] >= q.y && pt[1] <= q.y + q.height) {
+        return { p: q, i: -1 };
+      }
+    }
+    return { p: null, i: -1 };
+  }
+
+  function segDist(p, a, b) {
+    const dx = b[0] - a[0], dy = b[1] - a[1], len = dx * dx + dy * dy;
+    const t = len ? Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len)) : 0;
+    return Math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy));
+  }
 
   // --- form helpers
   function num(label, value, onchange, attrs = {}) {
@@ -432,15 +612,21 @@ export function render(view, store, actions) {
     }
     const d = devices()[p.device_id];
     fill(form,
-      h("div", { class: "section-title" }, "Valgt lyskæde"),
+      h("div", { class: "section-title" }, "Lyskæder og dele"),
       h("div", { class: "list" }, layout.placements.map((q) => h("div", {
         class: "list-item", style: { cursor: "pointer", fontWeight: q.id === p.id ? 600 : 400 },
         onclick: () => { if (q.id !== selected) { stopHighlight(); cursor = null; guide = null; } selected = q.id; addMode = false; draw(); drawForm(); },
       }, h("span", { class: "dot", style: { background: colorFor(q.device_id) } }),
-        h("div", { class: "grow" }, devices()[q.device_id]?.name || "?",
+        h("div", { class: "grow" }, devices()[q.device_id]?.name || "?", q.name ? ` · ${q.name}` : "",
           q.template ? h("span", { class: "muted" }, ` · ${TEMPLATES[q.template]?.name.split(" (")[0] || q.template}`) : null),
         h("span", { class: "muted" }, `LED ${q.start}${q.count ? `–${q.start + q.count - 1}` : "+"} · ${q.shape}`)))),
       cursorPanel(p),
+      transformRow(p),
+      (() => {
+        const input = h("input", { type: "text", value: p.name || "", placeholder: "Fx Ydre, Indre, Top" });
+        input.addEventListener("change", () => { p.name = input.value.trim(); markDirty(); draw(); drawForm(); });
+        return h("div", { class: "field" }, h("label", {}, "Navn på delen"), input);
+      })(),
       choice("Enhed", p.device_id, Object.values(devices()).map((x) => [x.id, x.name]), (v) => (p.device_id = v)),
       h("div", { class: "row" },
         num("Første LED", p.start, (v) => (p.start = Math.max(0, v)), { min: 0 }),
@@ -587,6 +773,7 @@ export function render(view, store, actions) {
   }
 
   function loadBackground() {
+    bgRemoveBtn.hidden = !layout.background;
     if (!layout.background) { bgImage = null; return draw(); }
     const img = new Image();
     img.onload = () => { bgImage = img; draw(); };
@@ -612,12 +799,14 @@ export function render(view, store, actions) {
     }),
   ];
   const ro = new ResizeObserver(resize);
-  ro.observe(canvas);
+  ro.observe(gridWrap);
+  wide.addEventListener("change", resize);
   loadBackground();
   drawForm();
   return () => {
     unsubs.forEach((u) => u());
     ro.disconnect();
+    wide.removeEventListener("change", resize);
     document.removeEventListener("keydown", onKey);
     stopHighlight();
   };

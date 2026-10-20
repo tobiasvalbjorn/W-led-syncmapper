@@ -12,7 +12,7 @@ GET    api/devices/{id}/outputs               LED outputs (strings) on the ESP
 POST   api/devices/{id}/identify              blink it
 GET    api/devices/{id}/wled/{path}           proxy to the device (json/cfg, presets.json …)
 POST   api/devices/{id}/wled/json/state|cfg   change any WLED setting
-POST   api/devices/{id}/highlight {index, start?, count?, marks?}  mapping cursor
+POST   api/devices/{id}/highlight {index, start?, count?, marks?} | {ranges: [[start, count]]}
 DELETE api/devices/{id}/highlight             end the mapping cursor
 POST   api/rooms              {name, icon}
 PATCH  api/rooms/{id}
@@ -170,8 +170,9 @@ def create_app(hub: Hub, frontend: Path, token: Optional[str] = None,
     @routes.post("/api/devices/{device_id}/highlight")
     async def highlight(request):
         data = await body(request)
-        await hub.highlight(request.match_info["device_id"], int(data.get("index", 0)),
-                            int(data.get("start", 0)), int(data.get("count", 0)), data.get("marks"))
+        await hub.highlight(request.match_info["device_id"], int(data.get("index", -1)),
+                            int(data.get("start", 0)), int(data.get("count", 0)), data.get("marks"),
+                            data.get("ranges"))
         return json_response({"ok": True})
 
     @routes.delete("/api/devices/{device_id}/highlight")

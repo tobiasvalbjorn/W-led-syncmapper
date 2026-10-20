@@ -35,9 +35,10 @@ export const patch = (p, b = {}) => api("PATCH", p, b);
 export const del = (p) => api("DELETE", p);
 
 // Throttle rapid calls (sliders, colour wheel) to one in flight + latest.
+// .cancel() drops a call that is still waiting.
 export function throttled(fn, ms = 80) {
   let timer = null, pending = null;
-  return (...args) => {
+  const call = (...args) => {
     pending = args;
     if (timer) return;
     fn(...pending);
@@ -47,6 +48,8 @@ export function throttled(fn, ms = 80) {
       if (pending) { fn(...pending); pending = null; timer = setTimeout(tick, ms); }
     }, ms);
   };
+  call.cancel = () => { pending = null; };
+  return call;
 }
 
 // Live connection: config pushes and (optionally) pixel preview frames.
