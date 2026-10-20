@@ -196,7 +196,7 @@ class Placement:
 
     id: str
     device_id: str
-    name: str = ""  # e.g. "Ydre" / "Indre" when one strip is split into parts
+    name: str = ""  # e.g. "Outer" / "Inner" when one strip is split into parts
     start: int = 0  # first LED index on the device
     count: int = 0  # number of LEDs (0 = rest of the device)
     shape: str = "line"  # "line" | "matrix" | "points"
@@ -206,6 +206,9 @@ class Placement:
     # closed shape the last anchor is `count` (the loop ends just before the
     # first point). Empty = LEDs spread evenly by length.
     anchors: List[int] = field(default_factory=list)
+    # Optional curve per segment (len(points) - 1): bulge = tan(sweep / 4),
+    # 0 = straight, 1 = half circle. A circle is two points with [1, 1].
+    bulges: List[float] = field(default_factory=list)
     reverse: bool = False
     # matrix only
     x: float = 0.0

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import colorsys
 import logging
 import time
 from dataclasses import dataclass, field
@@ -563,20 +564,30 @@ class Hub:
 
     async def highlight(self, device_id: str, index: int = -1, start: int = 0, count: int = 0,
                         marks: Optional[List[int]] = None,
-                        ranges: Optional[List[List[int]]] = None) -> None:
-        """Show the grid editor's selection on the real strip.
+                        ranges: Optional[List[list]] = None, effect: str = "solid") -> None:
+        """Show the grid editor's selection or a test pattern on the real strip.
 
-        Cursor mode (index >= 0): one LED bright white, the placement range
-        dim blue, so you can walk along a strip with the arrow keys.
-        Part mode (ranges): whole LED ranges bright, e.g. the part or lamp
-        under the mouse in the grid; everything else on the device off.
+        ranges: [[start, count, [r, g, b]?], ...] – LED ranges to light, each
+        in its own colour (default white). Used for "the part under the
+        mouse", for one colour per part/corner stretch, and for test effects.
+        effect: "solid" | "chase" (a running dot that shows the direction) |
+        "rainbow" (hue along each range).
+        Cursor mode (index >= 0) draws on top: the LED under the cursor white,
+        the first LED green, corners already set amber. Without ranges the
+        placement range is shown dim blue.
         """
+        if effect not in ("solid", "chase", "rainbow"):
+            raise ValueError(f"Unknown test effect {effect}")
         device = self.config.devices[device_id]
         fresh = device_id not in self.highlights
+        parsed = []
+        for r in ranges or []:
+            color = tuple(max(0, min(255, int(c))) for c in r[2])[:3] if len(r) > 2 and r[2] else (200, 200, 200)
+            parsed.append((int(r[0]), int(r[1]), color))
         self.highlights[device_id] = {
             "index": int(index), "start": int(start), "count": int(count) or device.led_count - int(start),
             "marks": [int(m) for m in (marks or [])],
-            "ranges": [(int(r[0]), int(r[1])) for r in (ranges or [])],
+            "ranges": parsed, "effect": effect, "since": time.monotonic(),
             "until": time.monotonic() + self.HIGHLIGHT_IDLE,
         }
         if fresh:
@@ -598,14 +609,15 @@ class Hub:
                 asyncio.ensure_future(self.reapply_all())
                 continue
             frame = [(0, 0, 0)] * device.led_count
-            if hl.get("ranges"):
-                for start, count in hl["ranges"]:
-                    for i in range(max(0, start), min(device.led_count, start + count)):
-                        frame[i] = (200, 200, 200)
+            t = now - hl.get("since", now)
+            for start, count, color in hl.get("ranges", []):
+                _paint_range(frame, start, count, color, hl.get("effect", "solid"), t)
+            if hl["index"] < 0:
                 frames[device_id] = frame
                 continue
-            for i in range(hl["start"], min(device.led_count, hl["start"] + hl["count"])):
-                frame[i] = (0, 0, 24)  # the placement's range, dim blue
+            if not hl.get("ranges"):
+                for i in range(hl["start"], min(device.led_count, hl["start"] + hl["count"])):
+                    frame[i] = (0, 0, 24)  # the placement's range, dim blue
             if 0 <= hl["start"] < device.led_count:
                 frame[hl["start"]] = (0, 70, 0)  # first LED of the range, green
             for m in hl["marks"]:
@@ -629,6 +641,39 @@ class Hub:
         self.scan = None
         await self.reapply_all()
         self.changed(save=False)
+
+
+def _paint_range(frame: list, start: int, count: int, color: Tuple[int, int, int],
+                 effect: str, t: float) -> None:
+    """Fill frame[start:start+count] with a test pattern."""
+    n = len(frame)
+    if count <= 0:
+        return
+    if effect == "chase":
+        # a head running from the first to the last LED with a fading tail,
+        # over a faint background, so the wiring direction is obvious
+        head = (t * 25.0) % count
+        tail = max(3, count // 8)
+        faint = tuple(c // 12 for c in color)
+        for k in range(count):
+            i = start + k
+            if not 0 <= i < n:
+                continue
+            behind = head - k
+            if 0 <= behind < tail:
+                f = 1.0 - behind / tail
+                frame[i] = tuple(int(c * f + fc * (1 - f)) for c, fc in zip(color, faint))
+            else:
+                frame[i] = faint
+    elif effect == "rainbow":
+        for k in range(count):
+            i = start + k
+            if 0 <= i < n:
+                r, g, b = colorsys.hsv_to_rgb((k / count + t * 0.2) % 1.0, 1.0, 0.8)
+                frame[i] = (int(r * 255), int(g * 255), int(b * 255))
+    else:
+        for i in range(max(0, start), min(n, start + count)):
+            frame[i] = color
 
 
 def _state_dict(state: LightState) -> dict:

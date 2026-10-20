@@ -1,7 +1,7 @@
 {
   "name": "WLED Hub",
   "short_name": "WLED Hub",
-  "description": "Styr og synkroniser alle dine WLED-lys som zoner",
+  "description": "Control and sync all your WLED lights as zones",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

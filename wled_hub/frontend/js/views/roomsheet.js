@@ -11,8 +11,8 @@ const PRESETS = [
 export function effectLabel(state, effects) {
   const e = state.effect;
   if (e.source === "hub") return effects.hub.find((x) => x.key === e.id)?.name || e.id;
-  if (Number(e.id) === 0) return "Fast farve";
-  return effects.wled.find((x) => x.id === Number(e.id))?.name || `Effekt ${e.id}`;
+  if (Number(e.id) === 0) return "Solid colour";
+  return effects.wled.find((x) => x.id === Number(e.id))?.name || `Effect ${e.id}`;
 }
 
 function findTarget(config, id) {
@@ -47,14 +47,14 @@ export function openTargetSheet(store, targetId) {
     const header = h("div", { class: "row", style: { marginBottom: "6px" } },
       h("div", { style: { flex: 1 } },
         h("h2", {}, target.name),
-        h("div", { class: "muted" }, `${target.device_ids.length} enhed(er)`)),
+        h("div", { class: "muted" }, `${target.device_ids.length} device(s)`)),
       toggle(state.on, (on) => change({ on })),
     );
     const bri = h("div", { class: "row" }, icon("sun"),
-      slider({ value: state.brightness, min: 1, label: "Lysstyrke", oninput: (brightness) => change({ brightness, on: true }) }));
+      slider({ value: state.brightness, min: 1, label: "Brightness", oninput: (brightness) => change({ brightness, on: true }) }));
 
     const tabs = h("div", { class: "segmented" },
-      [["color", "Farve"], ["effects", "Effekter"], ["group", "Gruppe"], ["edit", "Rediger"]].map(([key, label]) =>
+      [["color", "Colour"], ["effects", "Effects"], ["group", "Group"], ["edit", "Edit"]].map(([key, label]) =>
         h("button", { class: tab === key ? "active" : "", onclick: () => { tab = key; draw(); } }, label)));
 
     const content = { color: colorTab, effects: effectsTab, group: groupTab, edit: editTab }[tab]();
@@ -70,7 +70,7 @@ export function openTargetSheet(store, targetId) {
       ["color", "color2"].map((slot, i) => h("button", {
         class: `swatch${colorSlot === slot ? " active" : ""}`,
         style: { background: rgbCss(state[slot]), width: "44px", height: "44px" },
-        title: i ? "Farve 2 (baggrund / effekt)" : "Farve 1",
+        title: i ? "Colour 2 (background / effect)" : "Colour 1",
         onclick: () => { colorSlot = slot; draw(); },
       })));
     const presets = h("div", { class: "swatches" }, PRESETS.map((c) =>
@@ -80,22 +80,22 @@ export function openTargetSheet(store, targetId) {
         draw();
       } })));
     const solid = h("button", { class: "btn secondary small", style: { display: "block", margin: "12px auto 0" },
-      onclick: () => { change({ on: true, effect: { source: "wled", id: 0 } }); toast("Fast farve"); } }, "Brug som fast farve");
+      onclick: () => { change({ on: true, effect: { source: "wled", id: 0 } }); toast("Solid colour"); } }, "Use as solid colour");
     return h("div", {},
-      h("p", { class: "muted", style: { textAlign: "center", margin: "4px 0" } }, "Farve 1 · Farve 2"),
+      h("p", { class: "muted", style: { textAlign: "center", margin: "4px 0" } }, "Colour 1 · Colour 2"),
       slotButtons, wheel, presets, solid);
   }
 
   function effectsTab() {
     const effects = store.effects;
     const srcTabs = h("div", { class: "segmented" },
-      h("button", { class: effectSource === "hub" ? "active" : "", onclick: () => { effectSource = "hub"; draw(); } }, "Hub – på tværs af enheder"),
-      h("button", { class: effectSource === "wled" ? "active" : "", onclick: () => { effectSource = "wled"; draw(); } }, "WLED – indbyggede"));
+      h("button", { class: effectSource === "hub" ? "active" : "", onclick: () => { effectSource = "hub"; draw(); } }, "Hub – across devices"),
+      h("button", { class: effectSource === "wled" ? "active" : "", onclick: () => { effectSource = "wled"; draw(); } }, "WLED – built-in"));
 
     const list = effectSource === "hub"
       ? effects.hub.map((e) => ({ id: e.key, name: e.name, desc: e.description }))
       : effects.wled.map((e) => ({ id: e.id, name: e.name, desc: "" }));
-    const search = h("input", { class: "search", type: "search", placeholder: "Søg effekt…", value: filter });
+    const search = h("input", { class: "search", type: "search", placeholder: "Search effects…", value: filter });
     const grid = h("div", { class: "effects" });
     const fill = () => {
       grid.replaceChildren(...list
@@ -110,10 +110,10 @@ export function openTargetSheet(store, targetId) {
 
     const eff = state.effect;
     const controls = h("div", {},
-      h("div", { class: "field" }, h("label", {}, "Hastighed"),
-        slider({ value: eff.speed, label: "Hastighed", oninput: (speed) => change({ effect: { speed } }) })),
-      h("div", { class: "field" }, h("label", {}, "Intensitet / skala"),
-        slider({ value: eff.intensity, label: "Intensitet", oninput: (intensity) => change({ effect: { intensity } }) })),
+      h("div", { class: "field" }, h("label", {}, "Speed"),
+        slider({ value: eff.speed, label: "Speed", oninput: (speed) => change({ effect: { speed } }) })),
+      h("div", { class: "field" }, h("label", {}, "Intensity / scale"),
+        slider({ value: eff.intensity, label: "Intensity", oninput: (intensity) => change({ effect: { intensity } }) })),
     );
     if (eff.source === "hub") {
       const def = effects.hub.find((e) => e.key === eff.id);
@@ -129,8 +129,8 @@ export function openTargetSheet(store, targetId) {
       controls.append(h("div", { class: "field" }, h("label", {}, "Palette"), sel));
     }
     const note = effectSource === "hub"
-      ? "Hub-effekter beregnes af hub'en på det fælles grid og streames til alle enheder samtidig (DDP), så de flyder på tværs af lyskæderne."
-      : "WLED-effekter kører på selve enhederne. Hub'en holder dem i takt med WLED's UDP-sync.";
+      ? "Hub effects are rendered by the hub on the shared grid and streamed to all devices at once (DDP), so they flow across the light strings."
+      : "WLED effects run on the devices themselves. The hub keeps them in step with WLED's UDP sync.";
     return h("div", {}, srcTabs, h("p", { class: "muted" }, note), search, grid, controls);
   }
 
@@ -142,30 +142,30 @@ export function openTargetSheet(store, targetId) {
       input.addEventListener("change", () => (input.checked ? mine.add(room.id) : mine.delete(room.id)));
       const other = Object.values(config.groups).find((g) => g.id !== target.id && g.room_ids.includes(room.id));
       return h("label", { class: "list-item" }, input,
-        h("div", { class: "grow" }, room.name, other ? h("div", { class: "muted" }, `I gruppen ${other.name}`) : null));
+        h("div", { class: "grow" }, room.name, other ? h("div", { class: "muted" }, `In group ${other.name}`) : null));
     });
-    const name = h("input", { type: "text", value: target.kind === "group" ? target.name : "", placeholder: "Gruppenavn, fx Hele huset" });
+    const name = h("input", { type: "text", value: target.kind === "group" ? target.name : "", placeholder: "Group name, e.g. Whole house" });
     const save = h("button", { class: "btn", onclick: async () => {
       try {
         const res = await post("groups", { room_ids: [...mine], name: name.value.trim() || undefined,
           id: target.kind === "group" ? target.id : undefined });
-        toast(res.id ? "Gruppe gemt" : "Gruppe opløst");
+        toast(res.id ? "Group saved" : "Group dissolved");
         s.close();
       } catch (e) { toast(e.message); }
-    } }, "Gem gruppe");
+    } }, "Save group");
     const all = h("button", { class: "btn secondary", onclick: () => {
       Object.keys(config.rooms).forEach((r) => mine.add(r));
-      if (!name.value) name.value = "Hele huset";
+      if (!name.value) name.value = "Whole house";
       draw2();
-    } }, "Vælg alle");
+    } }, "Select all");
     const ungroup = target.kind === "group" ? h("button", { class: "btn secondary", onclick: async () => {
       await del(`groups/${target.id}`).catch((e) => toast(e.message));
       s.close();
-    } }, "Opløs gruppe") : null;
+    } }, "Ungroup") : null;
     const wrap = h("div", {},
-      h("p", { class: "muted" }, "Vælg de rum der skal styres sammen. Grupperede rum spiller samme lys – og hub-effekter flyder hen over dem alle."),
+      h("p", { class: "muted" }, "Choose the rooms to control together. Grouped rooms show the same light – and hub effects flow across all of them."),
       h("div", { class: "list" }, checks),
-      h("div", { class: "field" }, h("label", {}, "Navn"), name),
+      h("div", { class: "field" }, h("label", {}, "Name"), name),
       h("div", { class: "row" }, save, all, ungroup));
     const draw2 = () => wrap.querySelectorAll("input[type=checkbox]").forEach((c, i) => {
       c.checked = mine.has(Object.values(config.rooms).sort((a, b) => a.order - b.order)[i].id);
@@ -175,7 +175,7 @@ export function openTargetSheet(store, targetId) {
 
   function editTab() {
     if (target.kind === "group") {
-      return h("p", { class: "muted" }, "Grupper redigeres under fanen Gruppe.");
+      return h("p", { class: "muted" }, "Groups are edited on the Group tab.");
     }
     const room = store.config.rooms[target.id];
     const name = h("input", { type: "text", value: room.name });
@@ -189,24 +189,24 @@ export function openTargetSheet(store, targetId) {
         } }, icon(key))));
     const devices = Object.values(store.config.devices).filter((d) => d.room_id === room.id);
     return h("div", {},
-      h("div", { class: "field" }, h("label", {}, "Navn"), name),
-      h("div", { class: "field" }, h("label", {}, "Ikon"), icons),
-      h("div", { class: "field" }, h("label", {}, "Enheder i rummet"),
+      h("div", { class: "field" }, h("label", {}, "Name"), name),
+      h("div", { class: "field" }, h("label", {}, "Icon"), icons),
+      h("div", { class: "field" }, h("label", {}, "Devices in this room"),
         devices.length
           ? h("div", { class: "list" }, devices.map((d) => h("div", { class: "list-item" },
               h("span", { class: `dot${d.online ? " on" : ""}` }), h("div", { class: "grow" }, d.name),
               h("span", { class: "muted" }, `${d.led_count} LEDs`))))
-          : h("p", { class: "muted" }, "Ingen – flyt enheder hertil under Enheder.")),
+          : h("p", { class: "muted" }, "None – move devices here under Devices.")),
       h("div", { class: "row" },
         h("button", { class: "btn", onclick: async () => {
           await patch(`rooms/${room.id}`, { name: name.value.trim() || room.name, icon: chosen }).catch((e) => toast(e.message));
-          toast("Gemt");
-        } }, "Gem"),
+          toast("Saved");
+        } }, "Save"),
         h("button", { class: "btn danger", onclick: async () => {
-          if (!confirm(`Slet rummet ${room.name}? Enhederne bliver ikke slettet.`)) return;
+          if (!confirm(`Delete the room ${room.name}? Its devices will not be deleted.`)) return;
           await del(`rooms/${room.id}`).catch((e) => toast(e.message));
           s.close();
-        } }, "Slet rum")),
+        } }, "Delete room")),
     );
   }
 

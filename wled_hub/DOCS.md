@@ -5,12 +5,10 @@ Controls and synchronises all your WLED devices as rooms and groups (Sonos-style
 ## Getting started
 
 1. Start the add-on and open **WLED Hub** in the sidebar.
-2. **Devices** lists the WLED devices found on your network. Tap *Add* (*Tilføj*).
-3. Create rooms with **+** under **Rooms** (*Rum*) and move the devices into them.
+2. **Devices** lists the WLED devices found on your network. Tap *Add*.
+3. Create rooms with **+** under **Rooms** and move the devices into them.
 4. Place your light strings under **Grid**, either by hand or with the camera icon.
 5. Install the **WLED Hub** integration (HACS) to get rooms and groups as light entities.
-
-The app's interface is currently in Danish.
 
 ## Options
 

@@ -34,7 +34,7 @@ function show(tab) {
   const view = document.getElementById("view");
   view.replaceChildren();
   if (!store.config) {
-    view.append(h("div", { class: "empty" }, "Forbinder til hub…"));
+    view.append(h("div", { class: "empty" }, "Connecting to hub…"));
     cleanup = null;
     return;
   }

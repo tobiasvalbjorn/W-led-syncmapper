@@ -14,8 +14,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export function openScanner(store) {
   if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
     sheet(h("div", {},
-      h("h2", {}, "Kamera kræver HTTPS"),
-      h("p", {}, "Browsere giver kun kameraadgang på sikre forbindelser. Åbn WLED Hub via Home Assistant (med HTTPS, fx Nabu Casa), eller slå SSL til i add-on'ens indstillinger og åbn https://<hub-ip>:8787."),
+      h("h2", {}, "Camera requires HTTPS"),
+      h("p", {}, "Browsers only allow camera access on secure connections. Open WLED Hub through Home Assistant (with HTTPS, e.g. Nabu Casa), or turn on SSL in the add-on's settings and open https://<hub-ip>:8787."),
     ));
     return;
   }
@@ -28,10 +28,10 @@ export function openScanner(store) {
 
   const video = h("video", { playsinline: true, muted: true, autoplay: true, style: { width: "100%", borderRadius: "12px", background: "#000" } });
   const overlay = h("canvas", { style: { width: "100%", borderRadius: "12px", display: "none" } });
-  const status = h("p", { class: "muted" }, "Stil dig så alle lyskæderne er i billedet. Brug gerne stativ – telefonen skal holdes helt stille. Det virker bedst i mørke.");
+  const status = h("p", { class: "muted" }, "Stand so all the light strings are in the picture. A tripod helps – the phone must be held completely still. Works best in the dark.");
   const progress = h("progress", { max: 1, value: 0, style: { width: "100%", display: "none" } });
   const startBtn = h("button", { class: "btn", onclick: () => run() }, "Start scanning");
-  const saveBtn = h("button", { class: "btn", style: { display: "none" } }, "Gem på grid");
+  const saveBtn = h("button", { class: "btn", style: { display: "none" } }, "Save to grid");
   const numField = (label, obj, key, attrs = {}) => {
     const input = h("input", { type: "number", value: obj[key], step: 0.5, ...attrs });
     input.addEventListener("change", () => (obj[key] = Number(input.value)));
@@ -39,7 +39,7 @@ export function openScanner(store) {
   };
 
   const s = sheet(h("div", {},
-    h("h2", {}, "Kamera-mapping"),
+    h("h2", {}, "Camera mapping"),
     status,
     h("div", { class: "list" }, devices.map((d) => {
       const c = h("input", { type: "checkbox", checked: true });
@@ -47,28 +47,28 @@ export function openScanner(store) {
       return h("label", { class: "list-item" }, c, h("div", { class: "grow" }, d.name), h("span", { class: "muted" }, `${d.led_count} LEDs`));
     })),
     h("details", {},
-      h("summary", { class: "muted", style: { margin: "10px 0" } }, "Placering på grid og avanceret"),
-      h("p", { class: "muted" }, "Hvor på det samlede grid skal det scannede billede placeres? (fx forsiden af huset). Scan flere facader hver for sig og placér dem forskellige steder."),
+      h("summary", { class: "muted", style: { margin: "10px 0" } }, "Grid placement and advanced"),
+      h("p", { class: "muted" }, "Where on the shared grid should the scanned image go? (e.g. the front of the house). Scan several facades separately and place them in different spots."),
       h("div", { class: "row" }, numField("X", area, "x"), numField("Y", area, "y")),
-      h("div", { class: "row" }, numField("Bredde", area, "width"), numField("Højde", area, "height")),
+      h("div", { class: "row" }, numField("Width", area, "width"), numField("Height", area, "height")),
       (() => {
         const lv = h("input", { type: "range", min: 30, max: 255, value: level });
         lv.addEventListener("input", () => (level = Number(lv.value)));
         const st = h("input", { type: "number", value: settle, min: 100, max: 2000, step: 50 });
         st.addEventListener("change", () => (settle = Number(st.value)));
         return h("div", {},
-          h("div", { class: "field" }, h("label", {}, "LED-lysstyrke under scanning (lavere = mindre overstråling)"), lv),
-          h("div", { class: "field" }, h("label", {}, "Ventetid pr. billede (ms) – øg ved langsomt WiFi"), st));
+          h("div", { class: "field" }, h("label", {}, "LED brightness while scanning (lower = less blooming)"), lv),
+          h("div", { class: "field" }, h("label", {}, "Wait per frame (ms) – increase on slow WiFi"), st));
       })()),
     video, overlay, progress,
     h("div", { class: "row", style: { marginTop: "12px" } }, startBtn, saveBtn,
-      h("button", { class: "btn secondary", onclick: () => s.close() }, "Luk")),
+      h("button", { class: "btn secondary", onclick: () => s.close() }, "Close")),
   ), { onClose: cleanup });
 
   navigator.mediaDevices.getUserMedia({
     video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false,
   }).then((st) => { stream = st; video.srcObject = st; })
-    .catch((e) => { status.textContent = `Kunne ikke åbne kameraet: ${e.message}`; startBtn.disabled = true; });
+    .catch((e) => { status.textContent = `Could not open the camera: ${e.message}`; startBtn.disabled = true; });
 
   async function cleanup() {
     stream?.getTracks().forEach((t) => t.stop());
@@ -111,8 +111,8 @@ export function openScanner(store) {
   }
 
   async function run() {
-    if (!chosen.size) return toast("Vælg mindst én enhed");
-    if (!video.videoWidth) return toast("Kameraet er ikke klar endnu");
+    if (!chosen.size) return toast("Select at least one device");
+    if (!video.videoWidth) return toast("The camera is not ready yet");
     running = true;
     startBtn.disabled = true;
     saveBtn.style.display = "none";
@@ -128,15 +128,15 @@ export function openScanner(store) {
 
       // let auto-exposure settle on the lit scene, then try to lock it
       await post("scan/pattern", { kind: "all" });
-      status.textContent = "Justerer kameraet…";
+      status.textContent = "Adjusting the camera…";
       await sleep(1500);
       const locked = await lockExposure();
-      const all = await frame({ kind: "all" }); tick("Alle tændt");
-      const black = await frame({ kind: "black" }); tick("Alle slukket");
+      const all = await frame({ kind: "all" }); tick("All on");
+      const black = await frame({ kind: "black" }); tick("All off");
       const pairs = [];
       for (let bit = 0; bit < scan.bits; bit++) {
-        const on = await frame({ kind: "bit", bit }); tick(`Mønster ${bit + 1}/${scan.bits}`);
-        const off = await frame({ kind: "bit", bit, inverse: true }); tick(`Mønster ${bit + 1}/${scan.bits} (omvendt)`);
+        const on = await frame({ kind: "bit", bit }); tick(`Pattern ${bit + 1}/${scan.bits}`);
+        const off = await frame({ kind: "bit", bit, inverse: true }); tick(`Pattern ${bit + 1}/${scan.bits} (inverted)`);
         pairs.push([on, off]);
       }
       await post("scan/stop");
@@ -146,12 +146,12 @@ export function openScanner(store) {
       showResult(result, all, scan, locked);
     } catch (e) {
       toast(e.message);
-      status.textContent = `Fejl: ${e.message}`;
+      status.textContent = `Error: ${e.message}`;
       await post("scan/stop").catch(() => {});
       running = false;
     } finally {
       startBtn.disabled = false;
-      startBtn.textContent = "Scan igen";
+      startBtn.textContent = "Scan again";
       progress.style.display = "none";
     }
   }
@@ -174,8 +174,8 @@ export function openScanner(store) {
       octx.beginPath(); octx.arc(p.x, p.y, 2.2, 0, 2 * Math.PI); octx.fill();
     });
     const pct = Math.round((found / scan.total) * 100);
-    status.textContent = `Fandt ${found} af ${scan.total} LEDs (${pct} %). Grønne er målt, gule er udregnet mellem naboer.` +
-      (locked ? "" : " Tip: kameraets eksponering kunne ikke låses – hvis resultatet er dårligt, prøv i mørke eller med lavere LED-lysstyrke.");
+    status.textContent = `Found ${found} of ${scan.total} LEDs (${pct} %). Green ones are measured, yellow ones are interpolated between neighbours.` +
+      (locked ? "" : " Tip: the camera's exposure could not be locked – if the result is poor, try in the dark or with lower LED brightness.");
     if (!found) return;
     saveBtn.style.display = "";
     saveBtn.onclick = () => save(result, scan);
@@ -202,7 +202,7 @@ export function openScanner(store) {
     }
     try {
       await put("layout", layout);
-      toast("Pixel-map gemt på grid'et");
+      toast("Pixel map saved to the grid");
       s.close();
       location.hash = "grid";
     } catch (e) { toast(e.message); }

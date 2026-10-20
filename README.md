@@ -37,11 +37,9 @@ action: light.turn_on
 target:
   entity_id: light.whole_house
 data:
-  effect: "Hub: Regnbuebølge"
+  effect: "Hub: Rainbow wave"
   brightness: 180
 ```
-
-The web app's text is currently in Danish, including hub effect names such as "Regnbuebølge" (rainbow wave). An English interface is planned.
 
 ## Phone app (PWA) and local network
 

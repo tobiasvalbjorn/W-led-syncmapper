@@ -13,7 +13,56 @@ from .models import Device, Layout, Placement
 Coord = Tuple[float, float]
 
 
-def _polyline(points: List[List[float]], count: int) -> List[Coord]:
+# --- segments: straight, or a circular arc given by a "bulge" -------------
+#
+# bulge = tan(sweep / 4), like DXF polylines: 0 = straight, 1 = half circle,
+# about 0.414 = quarter circle. Positive bulges curve to the left of the
+# direction of travel (in x-right / y-down canvas coordinates: to the right
+# on screen when going up). A full circle is two points with bulge 1 twice.
+
+
+def _arc(a, b, bulge):
+    """(center, radius, start angle, sweep) of an arc segment, or None if straight."""
+    if abs(bulge) < 1e-6:
+        return None
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    c = math.hypot(dx, dy)
+    if c == 0:
+        return None
+    nx, ny = -dy / c, dx / c  # left normal
+    s = bulge * c / 2  # signed sagitta
+    r = (c * c / 4 + s * s) / (2 * abs(s))
+    mx, my = (a[0] + b[0]) / 2, (a[1] + b[1]) / 2
+    off = s - math.copysign(r, s)
+    cx, cy = mx + nx * off, my + ny * off
+    a0 = math.atan2(a[1] - cy, a[0] - cx)
+    amid = math.atan2(my + ny * s - cy, mx + nx * s - cx)  # arc midpoint
+    half = (amid - a0 + math.pi) % (2 * math.pi) - math.pi
+    return cx, cy, r, a0, 2 * half
+
+
+def seg_length(a, b, bulge: float = 0.0) -> float:
+    arc = _arc(a, b, bulge)
+    if arc is None:
+        return math.hypot(b[0] - a[0], b[1] - a[1])
+    return arc[2] * abs(arc[4])
+
+
+def seg_point(a, b, bulge: float, t: float) -> Coord:
+    arc = _arc(a, b, bulge)
+    if arc is None:
+        return (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
+    cx, cy, r, a0, sweep = arc
+    ang = a0 + sweep * t
+    return (cx + r * math.cos(ang), cy + r * math.sin(ang))
+
+
+def _bulge(bulges: List[float], k: int) -> float:
+    return float(bulges[k]) if k < len(bulges) else 0.0
+
+
+def _polyline(points: List[List[float]], count: int, bulges: Optional[List[float]] = None) -> List[Coord]:
+    bulges = bulges or []
     if count <= 0:
         return []
     if not points:
@@ -23,9 +72,9 @@ def _polyline(points: List[List[float]], count: int) -> List[Coord]:
 
     segments = []
     total = 0.0
-    for a, b in zip(points, points[1:]):
-        length = math.hypot(b[0] - a[0], b[1] - a[1])
-        segments.append((a, b, length))
+    for k, (a, b) in enumerate(zip(points, points[1:])):
+        length = seg_length(a, b, _bulge(bulges, k))
+        segments.append((a, b, length, _bulge(bulges, k)))
         total += length
     if total == 0:
         return [(float(points[0][0]), float(points[0][1]))] * count
@@ -39,14 +88,16 @@ def _polyline(points: List[List[float]], count: int) -> List[Coord]:
         while seg_index < len(segments) - 1 and dist > seg_start + segments[seg_index][2]:
             seg_start += segments[seg_index][2]
             seg_index += 1
-        a, b, length = segments[seg_index]
+        a, b, length, bulge = segments[seg_index]
         t = 0.0 if length == 0 else min(1.0, max(0.0, (dist - seg_start) / length))
-        coords.append((a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t))
+        coords.append(seg_point(a, b, bulge, t))
     return coords
 
 
-def _anchored(points: List[List[float]], anchors: List[int], count: int) -> List[Coord]:
+def _anchored(points: List[List[float]], anchors: List[int], count: int,
+              bulges: Optional[List[float]] = None) -> List[Coord]:
     """LEDs between two anchored points are spread evenly on that segment."""
+    bulges = bulges or []
     coords: List[Coord] = []
     last = len(points) - 1
     for i in range(count):
@@ -59,10 +110,9 @@ def _anchored(points: List[List[float]], anchors: List[int], count: int) -> List
         j = 0
         while j < last - 1 and anchors[j + 1] <= i:
             j += 1
-        a, b = points[j], points[j + 1]
         span = anchors[j + 1] - anchors[j]
         t = 0.0 if span <= 0 else (i - anchors[j]) / span
-        coords.append((a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t))
+        coords.append(seg_point(points[j], points[j + 1], _bulge(bulges, j), t))
     return coords
 
 
@@ -109,9 +159,9 @@ def placement_coords(p: Placement, device_leds: int) -> List[Coord]:
         coords = [(float(pt[0]), float(pt[1])) for pt in p.points[:count]]
         coords += [coords[-1] if coords else (0.0, 0.0)] * (count - len(coords))
     elif anchors_valid(p.anchors, p.points):
-        coords = _anchored(p.points, p.anchors, count)
+        coords = _anchored(p.points, p.anchors, count, p.bulges)
     else:
-        coords = _polyline(p.points, count)
+        coords = _polyline(p.points, count, p.bulges)
     if p.reverse:
         coords.reverse()
     return coords

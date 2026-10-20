@@ -157,7 +157,42 @@ def test_highlight_ranges_light_whole_parts():
         config = HubConfig.from_dict({"devices": {"d": {"id": "d", "name": "Lampe", "host": "x", "led_count": 6}}})
 
     hub = Hub(FakeStore(), "hub", "0")
-    hub.highlights["d"] = {"index": -1, "start": 0, "count": 6, "marks": [], "ranges": [(1, 2), (4, 1)],
-                           "until": float("inf")}
+    hub.highlights["d"] = {"index": -1, "start": 0, "count": 6, "marks": [],
+                           "ranges": [(1, 2, (200, 0, 0)), (4, 1, (0, 200, 0))], "until": float("inf")}
     frame = hub._highlight_frames()["d"]
-    assert [px[0] > 0 for px in frame] == [False, True, True, False, True, False]
+    assert [max(px) > 0 for px in frame] == [False, True, True, False, True, False]
+    assert frame[1] == (200, 0, 0) and frame[4] == (0, 200, 0)
+
+
+def test_chase_and_rainbow_patterns():
+    from wledhub.hub import _paint_range
+
+    frame = [(0, 0, 0)] * 20
+    _paint_range(frame, 2, 16, (255, 0, 0), "chase", 0.2)  # head at LED 5 of the range
+    assert frame[0] == (0, 0, 0) and frame[19] == (0, 0, 0)
+    assert max(frame[2:18])[0] == 255 and frame[2 + 5] == (255, 0, 0)
+    frame = [(0, 0, 0)] * 10
+    _paint_range(frame, 0, 10, (0, 0, 0), "rainbow", 0.0)
+    assert len(set(frame)) > 5
+
+
+def test_circle_from_two_points_with_arcs():
+    import math
+
+    # full circle of radius 1 around (0, 0): bottom point -> top point -> back, two half circles
+    p = Placement(id="c", device_id="d", count=8, points=[[0, 1], [0, -1], [0, 1]], bulges=[1, 1])
+    coords = placement_coords(p, 8)
+    for x, y in coords:
+        assert abs(math.hypot(x, y) - 1) < 1e-9
+    # evenly spread: neighbours are all 45 degrees apart (8 LEDs on a closed loop
+    # end one step before the start, so use anchors to make it a true loop)
+    p.anchors = [0, 4, 8]
+    coords = placement_coords(p, 8)
+    gaps = [math.hypot(coords[i + 1][0] - coords[i][0], coords[i + 1][1] - coords[i][1]) for i in range(7)]
+    assert max(gaps) - min(gaps) < 1e-9
+    assert coords[4] == (0, -1) or (abs(coords[4][0]) < 1e-9 and abs(coords[4][1] + 1) < 1e-9)
+
+
+def test_straight_segment_unchanged_with_zero_bulge():
+    p = Placement(id="p", device_id="d", count=5, points=[[0, 0], [4, 0]], bulges=[0])
+    assert placement_coords(p, 5) == [(0, 0), (1, 0), (2, 0), (3, 0), (4, 0)]

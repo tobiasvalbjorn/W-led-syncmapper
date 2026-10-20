@@ -50,7 +50,7 @@ class Effect:
     name = ""
     description = ""
     # Extra params beyond speed/intensity/colours, described for the UI:
-    # {"angle": {"type": "range", "min": 0, "max": 360, "default": 0, "label": "Retning"}}
+    # {"angle": {"type": "range", "min": 0, "max": 360, "default": 0, "label": "Direction"}}
     params: Dict[str, dict] = {}
 
     def __init__(self) -> None:
@@ -85,9 +85,9 @@ def _direction(angle_deg: float) -> Tuple[float, float]:
 @register
 class RainbowWave(Effect):
     key = "rainbow_wave"
-    name = "Regnbuebølge"
-    description = "Regnbue der ruller hen over hele huset"
-    params = {"angle": {"type": "range", "min": 0, "max": 359, "default": 0, "label": "Retning"}}
+    name = "Rainbow wave"
+    description = "A rainbow rolling across the whole house"
+    params = {"angle": {"type": "range", "min": 0, "max": 359, "default": 0, "label": "Direction"}}
 
     def render(self, coords, t, opts):
         dx, dy = _direction(self.param(opts, "angle"))
@@ -99,9 +99,9 @@ class RainbowWave(Effect):
 @register
 class GradientSweep(Effect):
     key = "gradient_sweep"
-    name = "Farveglid"
-    description = "Blød overgang mellem to farver der glider hen over griddet"
-    params = {"angle": {"type": "range", "min": 0, "max": 359, "default": 0, "label": "Retning"}}
+    name = "Colour sweep"
+    description = "A soft blend between two colours sliding across the grid"
+    params = {"angle": {"type": "range", "min": 0, "max": 359, "default": 0, "label": "Direction"}}
 
     def render(self, coords, t, opts):
         dx, dy = _direction(self.param(opts, "angle"))
@@ -118,11 +118,11 @@ class GradientSweep(Effect):
 @register
 class RadialPulse(Effect):
     key = "radial_pulse"
-    name = "Puls fra centrum"
-    description = "Ringe der breder sig ud fra et punkt"
+    name = "Centre pulse"
+    description = "Rings spreading out from a point"
     params = {
-        "cx": {"type": "range", "min": 0, "max": 100, "default": 50, "label": "Centrum X %"},
-        "cy": {"type": "range", "min": 0, "max": 100, "default": 50, "label": "Centrum Y %"},
+        "cx": {"type": "range", "min": 0, "max": 100, "default": 50, "label": "Centre X %"},
+        "cy": {"type": "range", "min": 0, "max": 100, "default": 50, "label": "Centre Y %"},
     }
 
     def render(self, coords, t, opts):
@@ -143,7 +143,7 @@ class RadialPulse(Effect):
 class Plasma(Effect):
     key = "plasma"
     name = "Plasma"
-    description = "Organiske, flydende farvemønstre"
+    description = "Organic, flowing colour patterns"
 
     def render(self, coords, t, opts):
         k = 2.0 + opts["intensity"] / 255.0 * 10.0
@@ -163,8 +163,8 @@ class Plasma(Effect):
 @register
 class Aurora(Effect):
     key = "aurora"
-    name = "Nordlys"
-    description = "Grønne og violette slør der bølger langsomt"
+    name = "Aurora"
+    description = "Green and violet veils slowly rippling"
 
     def render(self, coords, t, opts):
         s = t * self.speed_factor(opts["speed"])
@@ -181,9 +181,9 @@ class Aurora(Effect):
 @register
 class Comet(Effect):
     key = "comet"
-    name = "Komet"
-    description = "Et lyspunkt med hale der farer gennem hele huset"
-    params = {"angle": {"type": "range", "min": 0, "max": 359, "default": 0, "label": "Retning"}}
+    name = "Comet"
+    description = "A point of light with a tail racing through the whole house"
+    params = {"angle": {"type": "range", "min": 0, "max": 359, "default": 0, "label": "Direction"}}
 
     def render(self, coords, t, opts):
         dx, dy = _direction(self.param(opts, "angle"))
@@ -209,8 +209,8 @@ class Comet(Effect):
 @register
 class Twinkle(Effect):
     key = "twinkle"
-    name = "Stjernedrys"
-    description = "Tilfældige glimt der tænder og fader ud"
+    name = "Twinkle"
+    description = "Random sparkles that light up and fade out"
 
     def render(self, coords, t, opts):
         n = len(coords)
@@ -237,8 +237,8 @@ class Twinkle(Effect):
 @register
 class Fire(Effect):
     key = "fire"
-    name = "Ild"
-    description = "Flammer der slikker opad (bruger Y-aksen)"
+    name = "Fire"
+    description = "Flames licking upwards (uses the Y axis)"
 
     def render(self, coords, t, opts):
         s = t * (1.0 + self.speed_factor(opts["speed"]) * 4)
@@ -266,8 +266,8 @@ def _heat_color(h: float) -> RGB:
 @register
 class Breathe(Effect):
     key = "breathe"
-    name = "Åndedræt"
-    description = "Alle lys ånder roligt i takt"
+    name = "Breathe"
+    description = "All lights breathe calmly in sync"
 
     def render(self, coords, t, opts):
         v = 0.5 - 0.5 * math.cos(t * self.speed_factor(opts["speed"]) * 2 * math.pi)

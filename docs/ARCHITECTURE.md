@@ -87,6 +87,8 @@ When a target switches from a hub effect to a WLED effect, the hub sends `"live"
 }
 ```
 
+`bulges` (optional, one per segment) curves a segment into a circular arc: bulge = tan(sweep/4), 0 = straight, 1 = half circle. A circle is two points with bulges `[1, 1]`, so it has two segments like any other shape and its LEDs are spread evenly around it. The grid editor shows a small square in the middle of every segment; dragging it sets the bulge.
+
 `anchors` (optional) pins each point of a line to an LED index relative to `start`: LEDs between two points are spread evenly on that segment, so a corner lands exactly on the LED that sits in the real corner. For a closed shape the last anchor is `count`. Without anchors, LEDs are spread evenly by length. `template` records which shape template the placement came from, for the corner guide.
 
 Coordinates use any unit you like (metres work well). Effects receive them normalised to 0..1. Once a device has at least one placement, only the LEDs drawn on the grid take part in hub effects; the rest stay off. A device with no placement at all gets a temporary horizontal line, so a new device lights up straight away.
@@ -98,7 +100,11 @@ A lamp whose strip is split into parts (for example LEDs 0–55 on the outside a
 1. Create a shape from a template (rectangle for a TV backlight, window or door; three sides; L; gable; circle; line), choosing where LED 0 sits and the direction.
 2. The corner guide asks for each corner in turn. Move the cursor with the arrow keys (Shift = 10 LEDs, Home/End) or the on-screen buttons. The hub lights the cursor LED white on the real strip (`POST api/devices/{id}/highlight`), the first LED green and the corners already set amber.
 3. Press Enter when the white LED is in the corner. That LED becomes the corner's anchor.
-4. On free lines, Enter on any LED inserts a bend point there ("Knæk her"); drag it to where the corner is.
+4. On free lines, Enter on any LED inserts a bend point there ("Bend here"); drag it to where the corner is.
+
+## Test patterns
+
+The grid editor can show test patterns on the real lights for the selected part or whole lamp: one colour per part and per side (stretch between corners, for shapes with up to 12 segments), a chase that runs along each side to show the wiring direction, a rainbow, or white. The hub renders them from `POST api/devices/{id}/highlight {"ranges": [[start, count, [r, g, b]]], "effect": "solid" | "chase" | "rainbow"}`. While the LED cursor is active, the sides are shown in dimmed versions of the same colours.
 
 ## Camera mapping
 

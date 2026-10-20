@@ -9,8 +9,8 @@ import { get, post } from "../api.js";
 import { fill, h, sheet, slider, toast, toggle } from "../ui.js";
 
 const TABS = [
-  ["general", "Generelt"], ["sync", "Sync"], ["live", "Realtime"], ["nl", "Nattelys"],
-  ["presets", "Presets"], ["segments", "Segmenter"], ["raw", "Avanceret"],
+  ["general", "General"], ["sync", "Sync"], ["live", "Realtime"], ["nl", "Nightlight"],
+  ["presets", "Presets"], ["segments", "Segments"], ["raw", "Advanced"],
 ];
 
 export async function openDeviceSettings(store, deviceId) {
@@ -18,7 +18,7 @@ export async function openDeviceSettings(store, deviceId) {
   const api = (path) => `devices/${deviceId}/wled/${path}`;
   let tab = "general";
   let cfg = null, state = null, info = null;
-  const body = h("div", {}, h("p", { class: "muted" }, "Henter indstillinger fra enheden…"));
+  const body = h("div", {}, h("p", { class: "muted" }, "Loading settings from the device…"));
   const s = sheet(h("div", {},
     h("h2", {}, device.name),
     h("p", { class: "muted" }, `WLED ${device.version} · ${device.host}`),
@@ -29,7 +29,7 @@ export async function openDeviceSettings(store, deviceId) {
       [cfg, state, info] = await Promise.all([get(api("json/cfg")), get(api("json/state")), get(api("json/info"))]);
       draw();
     } catch (e) {
-      fill(body, h("p", {}, `Kunne ikke hente indstillinger: ${e.message}`));
+      fill(body, h("p", {}, `Could not load settings: ${e.message}`));
     }
   }
 
@@ -47,15 +47,15 @@ export async function openDeviceSettings(store, deviceId) {
   let pending = {};
   const setCfg = (path, value) => { merge(pending, nest(path, value)); merge(cfg, nest(path, value)); saveBar.hidden = false; };
   const saveBar = h("div", { class: "row", style: { position: "sticky", bottom: "0", padding: "10px 0", background: "var(--bg)" }, hidden: true },
-    h("button", { class: "btn", onclick: saveCfg }, "Gem på enheden"),
-    h("span", { class: "muted" }, "Skrives i enhedens flash-hukommelse."));
+    h("button", { class: "btn", onclick: saveCfg }, "Save to device"),
+    h("span", { class: "muted" }, "Written to the device's flash memory."));
 
   async function saveCfg() {
     try {
       await post(api("json/cfg"), pending);
       pending = {};
       saveBar.hidden = true;
-      toast("Gemt på enheden");
+      toast("Saved to device");
     } catch (e) { toast(e.message); }
   }
 
@@ -89,7 +89,7 @@ export async function openDeviceSettings(store, deviceId) {
   const groupBits = (path) => h("div", { class: "row", style: { gap: "4px", flexWrap: "wrap" } },
     [1, 2, 3, 4, 5, 6, 7, 8].map((n) => {
       const bit = 1 << (n - 1);
-      const c = h("input", { type: "checkbox", checked: ((at(cfg, path) || 0) & bit) !== 0, title: `Gruppe ${n}` });
+      const c = h("input", { type: "checkbox", checked: ((at(cfg, path) || 0) & bit) !== 0, title: `Group ${n}` });
       c.addEventListener("change", () => setCfg(path, c.checked ? (at(cfg, path) | bit) : (at(cfg, path) & ~bit)));
       return h("label", { style: { fontSize: "13px", display: "flex", alignItems: "center", gap: "2px" } }, c, n);
     }));
@@ -100,136 +100,136 @@ export async function openDeviceSettings(store, deviceId) {
     const up = info.uptime || 0;
     return [
       h("div", { class: "list" },
-        row("Tændt", toggle(state.on, (on) => sendState({ on }))),
-        row("Lysstyrke", slider({ value: state.bri, min: 1, label: "Lysstyrke", oninput: (bri) => sendState({ bri }) })),
-        row("Overgang", (() => {
+        row("On", toggle(state.on, (on) => sendState({ on }))),
+        row("Brightness", slider({ value: state.bri, min: 1, label: "Brightness", oninput: (bri) => sendState({ bri }) })),
+        row("Transition", (() => {
           const i = h("input", { type: "number", value: (state.transition ?? 7) / 10, step: 0.1, min: 0, style: { width: "80px" } });
           i.addEventListener("change", () => sendState({ transition: Math.round(Number(i.value) * 10) }));
           return i;
-        })(), "Sekunder ved skift af farve/lysstyrke"),
-        row("Ignorér live-data (live override)", (() => {
-          const sel = h("select", {}, [[0, "Fra"], [1, "Til live-data stopper"], [2, "Til genstart"]].map(([v, l]) =>
+        })(), "Seconds when changing colour/brightness"),
+        row("Ignore live data (live override)", (() => {
+          const sel = h("select", {}, [[0, "Off"], [1, "Until live data ends"], [2, "Until restart"]].map(([v, l]) =>
             h("option", { value: v, selected: state.lor === v }, l)));
           sel.addEventListener("change", () => sendState({ lor: Number(sel.value) }));
           return sel;
-        })(), "Når slået til, ignorerer enheden hub-streaming og kører sine egne effekter")),
-      h("div", { class: "section-title" }, "Enhed"),
+        })(), "When on, the device ignores hub streaming and runs its own effects")),
+      h("div", { class: "section-title" }, "Device"),
       h("div", { class: "list" },
-        row("Navn i WLED", cfgText(["id", "name"])),
-        row("mDNS-navn", cfgText(["id", "mdns"]), `${at(cfg, ["id", "mdns"]) || "?"}.local`),
-        row("Strømbegrænsning (mA)", cfgNumber(["hw", "led", "maxpwr"], { min: 0, step: 50 }), "0 = ingen begrænsning")),
+        row("Name in WLED", cfgText(["id", "name"])),
+        row("mDNS name", cfgText(["id", "mdns"]), `${at(cfg, ["id", "mdns"]) || "?"}.local`),
+        row("Current limit (mA)", cfgNumber(["hw", "led", "maxpwr"], { min: 0, step: 50 }), "0 = no limit")),
       h("div", { class: "section-title" }, "Status"),
       h("div", { class: "list" },
         row("Firmware", h("span", { class: "muted" }, `${info.ver} (${info.arch})`)),
         row("LEDs", h("span", { class: "muted" }, `${info.leds?.count} · ${info.leds?.fps ?? "?"} fps · ${info.leds?.pwr ?? "?"} mA`)),
         row("WiFi", h("span", { class: "muted" }, `${wifi.signal ?? "?"} % (${wifi.rssi ?? "?"} dBm)`)),
-        row("Oppetid", h("span", { class: "muted" }, `${Math.floor(up / 86400)} d ${Math.floor((up % 86400) / 3600)} t ${Math.floor((up % 3600) / 60)} m`)),
-        row("Live-kilde", h("span", { class: "muted" }, info.live ? `${info.lm} fra ${info.lip}` : "Ingen"))),
+        row("Uptime", h("span", { class: "muted" }, `${Math.floor(up / 86400)} d ${Math.floor((up % 86400) / 3600)} h ${Math.floor((up % 3600) / 60)} m`)),
+        row("Live source", h("span", { class: "muted" }, info.live ? `${info.lm} from ${info.lip}` : "None"))),
       h("div", { class: "row", style: { flexWrap: "wrap", marginTop: "12px" } },
-        h("a", { class: "btn secondary", href: `http://${device.host}/`, target: "_blank", rel: "noopener" }, "Åbn WLED's egen side"),
+        h("a", { class: "btn secondary", href: `http://${device.host}/`, target: "_blank", rel: "noopener" }, "Open WLED's own page"),
         h("button", { class: "btn danger", onclick: async () => {
-          if (!confirm(`Genstart ${device.name}?`)) return;
-          await sendState({ rb: true }, "Genstarter…");
-        } }, "Genstart")),
+          if (!confirm(`Restart ${device.name}?`)) return;
+          await sendState({ rb: true }, "Restarting…");
+        } }, "Restart")),
     ];
   }
 
   function sync() {
     const runtime = state.udpn || {};
     return [
-      h("p", { class: "muted" }, "WLED's egen UDP-sync mellem enheder. Bemærk: når enheden er i et rum, som kører en WLED-effekt, styrer hub'en sync-grupperne midlertidigt for at holde rummet i takt."),
-      h("div", { class: "section-title" }, "Lige nu (indtil genstart)"),
+      h("p", { class: "muted" }, "WLED's own UDP sync between devices. Note: when the device is in a room running a WLED effect, the hub temporarily controls the sync groups to keep the room in step."),
+      h("div", { class: "section-title" }, "Right now (until restart)"),
       h("div", { class: "list" },
         row("Send sync", toggle(!!runtime.send, (v) => sendState({ udpn: { send: v } }))),
-        row("Modtag sync", toggle((runtime.rgrp ?? (runtime.recv ? 1 : 0)) !== 0, (v) =>
+        row("Receive sync", toggle((runtime.rgrp ?? (runtime.recv ? 1 : 0)) !== 0, (v) =>
           sendState({ udpn: { rgrp: v ? (at(cfg, ["if", "sync", "recv", "grp"]) || 1) : 0 } })))),
-      h("div", { class: "section-title" }, "Send (gemt)"),
+      h("div", { class: "section-title" }, "Send (saved)"),
       h("div", { class: "list" },
-        row("Send sync-beskeder", cfgToggle(["if", "sync", "send", "en"])),
-        row("Send ved ændringer fra appen/API", cfgToggle(["if", "sync", "send", "dir"])),
-        row("Send ved knaptryk", cfgToggle(["if", "sync", "send", "btn"])),
-        row("Send ved Alexa", cfgToggle(["if", "sync", "send", "va"])),
-        row("Send ved Philips Hue", cfgToggle(["if", "sync", "send", "hue"])),
-        row("Ekstra gentagelser", cfgNumber(["if", "sync", "send", "ret"], { min: 0, max: 30 }), "Hjælper på ustabilt WiFi"),
-        row("Send til grupper", groupBits(["if", "sync", "send", "grp"]))),
-      h("div", { class: "section-title" }, "Modtag (gemt)"),
+        row("Send sync messages", cfgToggle(["if", "sync", "send", "en"])),
+        row("Send on changes from the app/API", cfgToggle(["if", "sync", "send", "dir"])),
+        row("Send on button press", cfgToggle(["if", "sync", "send", "btn"])),
+        row("Send on Alexa", cfgToggle(["if", "sync", "send", "va"])),
+        row("Send on Philips Hue", cfgToggle(["if", "sync", "send", "hue"])),
+        row("Extra retransmissions", cfgNumber(["if", "sync", "send", "ret"], { min: 0, max: 30 }), "Helps on unstable WiFi"),
+        row("Send to groups", groupBits(["if", "sync", "send", "grp"]))),
+      h("div", { class: "section-title" }, "Receive (saved)"),
       h("div", { class: "list" },
-        row("Modtag fra grupper", groupBits(["if", "sync", "recv", "grp"])),
-        row("Lysstyrke", cfgToggle(["if", "sync", "recv", "bri"])),
-        row("Farve", cfgToggle(["if", "sync", "recv", "col"])),
-        row("Effekt", cfgToggle(["if", "sync", "recv", "fx"])),
+        row("Receive from groups", groupBits(["if", "sync", "recv", "grp"])),
+        row("Brightness", cfgToggle(["if", "sync", "recv", "bri"])),
+        row("Colour", cfgToggle(["if", "sync", "recv", "col"])),
+        row("Effect", cfgToggle(["if", "sync", "recv", "fx"])),
         row("Palette", cfgToggle(["if", "sync", "recv", "pal"])),
-        row("Segment-indstillinger", cfgToggle(["if", "sync", "recv", "seg"])),
-        row("Segment-grænser", cfgToggle(["if", "sync", "recv", "sb"]))),
-      h("div", { class: "section-title" }, "Porte (kræver genstart)"),
+        row("Segment options", cfgToggle(["if", "sync", "recv", "seg"])),
+        row("Segment bounds", cfgToggle(["if", "sync", "recv", "sb"]))),
+      h("div", { class: "section-title" }, "Ports (restart required)"),
       h("div", { class: "list" },
-        row("UDP-port", cfgNumber(["if", "sync", "port0"])),
-        row("UDP-port 2", cfgNumber(["if", "sync", "port1"]))),
+        row("UDP port", cfgNumber(["if", "sync", "port0"])),
+        row("UDP port 2", cfgNumber(["if", "sync", "port1"]))),
     ];
   }
 
   function live() {
     return [
-      h("p", { class: "muted" }, "Hub-effekter sendes som DDP, som WLED altid modtager. Indstillingerne her gælder især UDP/Hyperion og E1.31/Art-Net."),
+      h("p", { class: "muted" }, "Hub effects are sent as DDP, which WLED always accepts. These settings mainly apply to UDP/Hyperion and E1.31/Art-Net."),
       h("div", { class: "list" },
-        row("Modtag UDP/Hyperion realtime", cfgToggle(["if", "live", "en"])),
-        row("Kun hovedsegment", cfgToggle(["if", "live", "mso"]), "Live-data styrer kun hovedsegmentet"),
-        row("Brug LED-map til live-data", cfgToggle(["if", "live", "rlm"])),
-        row("Timeout (×100 ms)", cfgNumber(["if", "live", "timeout"], { min: 1 }), "Hvor længe enheden venter, før den vender tilbage til egne effekter (25 = 2,5 s)")),
+        row("Receive UDP/Hyperion realtime", cfgToggle(["if", "live", "en"])),
+        row("Main segment only", cfgToggle(["if", "live", "mso"]), "Live data only controls the main segment"),
+        row("Use LED map for live data", cfgToggle(["if", "live", "rlm"])),
+        row("Timeout (×100 ms)", cfgNumber(["if", "live", "timeout"], { min: 1 }), "How long the device waits before returning to its own effects (25 = 2.5 s)")),
       h("div", { class: "section-title" }, "E1.31 / Art-Net / DMX"),
       h("div", { class: "list" },
         row("Port", cfgNumber(["if", "live", "port"])),
         row("Multicast", cfgToggle(["if", "live", "mc"])),
-        row("Univers", cfgNumber(["if", "live", "dmx", "uni"], { min: 0 })),
-        row("Startadresse", cfgNumber(["if", "live", "dmx", "addr"], { min: 1 })),
-        row("DMX-tilstand", cfgNumber(["if", "live", "dmx", "mode"], { min: 0 }), "Se WLED-dokumentationen for værdierne"),
-        row("Spring pakker i forkert rækkefølge over", cfgToggle(["if", "live", "dmx", "seqskip"]))),
+        row("Universe", cfgNumber(["if", "live", "dmx", "uni"], { min: 0 })),
+        row("Start address", cfgNumber(["if", "live", "dmx", "addr"], { min: 1 })),
+        row("DMX mode", cfgNumber(["if", "live", "dmx", "mode"], { min: 0 }), "See the WLED documentation for the values"),
+        row("Skip out-of-sequence packets", cfgToggle(["if", "live", "dmx", "seqskip"]))),
     ];
   }
 
   function nightlight() {
     const nl = state.nl || {};
     return [
-      h("p", { class: "muted" }, "Nattelyset dæmper lyset gradvist over en periode og slukker (eller går til en mållysstyrke)."),
+      h("p", { class: "muted" }, "The nightlight dims the light gradually over a period and turns off (or goes to a target brightness)."),
       h("div", { class: "list" },
-        row("Nattelys aktivt nu", toggle(!!nl.on, (on) => sendState({ nl: { on } }, on ? "Nattelys startet" : "Nattelys stoppet"))),
-        row("Varighed nu (min)", (() => {
+        row("Nightlight active now", toggle(!!nl.on, (on) => sendState({ nl: { on } }, on ? "Nightlight started" : "Nightlight stopped"))),
+        row("Duration now (min)", (() => {
           const i = h("input", { type: "number", value: nl.dur ?? 60, min: 1, max: 255, style: { width: "80px" } });
           i.addEventListener("change", () => sendState({ nl: { dur: Number(i.value) } }));
           return i;
         })()),
-        row("Standard-varighed (min)", cfgNumber(["light", "nl", "dur"], { min: 1, max: 255 })),
-        row("Tilstand", cfgSelect(["light", "nl", "mode"], [[0, "Øjeblikkelig"], [1, "Fade"], [2, "Farve-fade"], [3, "Solopgang"]])),
-        row("Mållysstyrke", cfgNumber(["light", "nl", "tbri"], { min: 0, max: 255 }), "0 = sluk til sidst")),
+        row("Default duration (min)", cfgNumber(["light", "nl", "dur"], { min: 1, max: 255 })),
+        row("Mode", cfgSelect(["light", "nl", "mode"], [[0, "Instant"], [1, "Fade"], [2, "Colour fade"], [3, "Sunrise"]])),
+        row("Target brightness", cfgNumber(["light", "nl", "tbri"], { min: 0, max: 255 }), "0 = turn off at the end")),
     ];
   }
 
   async function presets() {
-    const wrap = h("div", {}, h("p", { class: "muted" }, "Henter presets…"));
+    const wrap = h("div", {}, h("p", { class: "muted" }, "Loading presets…"));
     try {
       const all = await get(api("presets.json"));
       const list = Object.entries(all).filter(([id, p]) => id !== "0" && p && Object.keys(p).length)
         .sort((a, b) => Number(a[0]) - Number(b[0]));
-      const name = h("input", { type: "text", placeholder: "Navn på nyt preset" });
+      const name = h("input", { type: "text", placeholder: "Name of new preset" });
       const free = () => { for (let i = 1; i < 251; i++) if (!all[i] || !Object.keys(all[i]).length) return i; return 250; };
       fill(wrap,
         list.length ? h("div", { class: "list" }, list.map(([id, p]) => h("div", { class: "list-item" },
           h("div", { class: "grow" }, p.n || `Preset ${id}`, h("div", { class: "muted" }, `#${id}${p.ql ? ` · ${p.ql}` : ""}`)),
-          h("button", { class: "btn small", onclick: () => sendState({ ps: Number(id) }, `Preset ${p.n || id} aktiveret`) }, "Brug"),
+          h("button", { class: "btn small", onclick: () => sendState({ ps: Number(id) }, `Preset ${p.n || id} activated`) }, "Apply"),
           h("button", { class: "btn small danger", onclick: async () => {
-            if (!confirm(`Slet preset ${p.n || id}?`)) return;
-            await sendState({ pdel: Number(id) }, "Slettet");
+            if (!confirm(`Delete preset ${p.n || id}?`)) return;
+            await sendState({ pdel: Number(id) }, "Deleted");
             draw();
-          } }, "Slet"))))
-          : h("p", { class: "muted" }, "Ingen presets på enheden."),
-        h("div", { class: "section-title" }, "Gem nuværende tilstand som preset"),
+          } }, "Delete"))))
+          : h("p", { class: "muted" }, "No presets on the device."),
+        h("div", { class: "section-title" }, "Save current state as preset"),
         h("div", { class: "row" }, name, h("button", { class: "btn", onclick: async () => {
           const id = free();
-          await sendState({ psave: id, n: name.value.trim() || `Preset ${id}`, ib: true, sb: true }, `Gemt som preset ${id}`);
+          await sendState({ psave: id, n: name.value.trim() || `Preset ${id}`, ib: true, sb: true }, `Saved as preset ${id}`);
           setTimeout(draw, 500);
-        } }, "Gem")));
+        } }, "Save")));
     } catch (e) {
-      fill(wrap, h("p", {}, `Kunne ikke hente presets: ${e.message}`));
+      fill(wrap, h("p", {}, `Could not load presets: ${e.message}`));
     }
     return [wrap];
   }
@@ -237,14 +237,14 @@ export async function openDeviceSettings(store, deviceId) {
   function segments() {
     const segs = state.seg || [];
     return [
-      h("p", { class: "muted" }, "Segmenter er dele af lyskæden, der kan styres hver for sig i WLED."),
+      h("p", { class: "muted" }, "Segments are parts of the light string that can be controlled separately in WLED."),
       h("div", { class: "list" }, segs.map((seg) => h("div", { class: "list-item", style: { flexWrap: "wrap" } },
         h("div", { class: "grow" }, seg.n || `Segment ${seg.id}`,
-          h("div", { class: "muted" }, `LED ${seg.start}–${seg.stop - 1}${seg.startY !== undefined ? ` · rækker ${seg.startY}–${seg.stopY - 1}` : ""}`)),
+          h("div", { class: "muted" }, `LED ${seg.start}–${seg.stop - 1}${seg.startY !== undefined ? ` · rows ${seg.startY}–${seg.stopY - 1}` : ""}`)),
         toggle(seg.on !== false, (on) => sendState({ seg: [{ id: seg.id, on }] })),
         h("div", { style: { flexBasis: "100%" } },
-          slider({ value: seg.bri ?? 255, min: 1, label: "Segment-lysstyrke", oninput: (bri) => sendState({ seg: [{ id: seg.id, bri }] }) }))))),
-      h("p", { class: "muted" }, "Oprettelse og opdeling af segmenter gøres nemmest under Avanceret eller på WLED's egen side."),
+          slider({ value: seg.bri ?? 255, min: 1, label: "Segment brightness", oninput: (bri) => sendState({ seg: [{ id: seg.id, bri }] }) }))))),
+      h("p", { class: "muted" }, "Creating and splitting segments is easiest under Advanced or on WLED's own page."),
     ];
   }
 
@@ -253,24 +253,24 @@ export async function openDeviceSettings(store, deviceId) {
     const area = h("textarea", { style: { width: "100%", minHeight: "320px", fontFamily: "ui-monospace, monospace", fontSize: "12px",
       background: "var(--surface)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "12px", padding: "10px" } });
     const show = () => (area.value = JSON.stringify(which.value === "cfg" ? cfg : state, null, 2));
-    const pick = h("select", {}, h("option", { value: "cfg" }, "Konfiguration (json/cfg)"), h("option", { value: "state" }, "Tilstand (json/state)"));
+    const pick = h("select", {}, h("option", { value: "cfg" }, "Configuration (json/cfg)"), h("option", { value: "state" }, "State (json/state)"));
     pick.addEventListener("change", () => { which.value = pick.value; show(); });
     show();
     return [
-      h("p", { class: "muted" }, "Alle WLED-indstillinger som JSON. Ret og gem – kun de felter du sender, ændres. Forkerte værdier (fx LED-pins) kan gøre enheden utilgængelig, så vær forsigtig."),
+      h("p", { class: "muted" }, "All WLED settings as JSON. Edit and save – only the fields you send are changed. Wrong values (e.g. LED pins) can make the device unreachable, so be careful."),
       h("div", { class: "field" }, pick),
       area,
       h("div", { class: "row", style: { marginTop: "8px" } },
         h("button", { class: "btn", onclick: async () => {
           let data;
-          try { data = JSON.parse(area.value); } catch (e) { return toast(`Ugyldig JSON: ${e.message}`); }
+          try { data = JSON.parse(area.value); } catch (e) { return toast(`Invalid JSON: ${e.message}`); }
           try {
             await post(api(which.value === "cfg" ? "json/cfg" : "json/state"), data);
-            toast("Sendt til enheden");
+            toast("Sent to device");
             await load();
           } catch (e) { toast(e.message); }
-        } }, "Send til enheden"),
-        h("button", { class: "btn secondary", onclick: load }, "Hent igen")),
+        } }, "Send to device"),
+        h("button", { class: "btn secondary", onclick: load }, "Reload")),
     ];
   }
 

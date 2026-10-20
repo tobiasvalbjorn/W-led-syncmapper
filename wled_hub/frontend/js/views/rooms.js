@@ -1,10 +1,10 @@
-// "Rum" – the Sonos-style home screen: one card per room or group.
+// "Rooms" – the Sonos-style home screen: one card per room or group.
 // Long-press a card and drop it on another to group them.
 import { post, put, throttled } from "../api.js";
 import { fill, h, icon, rgbCss, sheet, slider, toast, toggle, ROOM_ICONS } from "../ui.js";
 import { openTargetSheet, effectLabel } from "./roomsheet.js";
 
-export const title = "Rum";
+export const title = "Rooms";
 
 export function targetState(config, target) {
   return target.kind === "group" ? config.groups[target.id].state : config.rooms[target.id].state;
@@ -27,15 +27,15 @@ function subtitle(config, target, state, effects) {
   if (target.kind === "group") {
     parts.push(config.groups[target.id].room_ids.map((r) => config.rooms[r]?.name).filter(Boolean).join(" + "));
   }
-  if (!target.device_ids.length) parts.push("Ingen enheder");
-  else if (!state.on) parts.push("Slukket");
+  if (!target.device_ids.length) parts.push("No devices");
+  else if (!state.on) parts.push("Off");
   else parts.push(effectLabel(state, effects));
   return parts.join(" · ");
 }
 
 export function render(view, store, actions) {
   actions.append(
-    h("button", { class: "icon-btn", title: "Nyt rum", onclick: () => newRoomSheet() }, icon("plus"))
+    h("button", { class: "icon-btn", title: "New room", onclick: () => newRoomSheet() }, icon("plus"))
   );
 
   const draw = () => {
@@ -47,13 +47,13 @@ export function render(view, store, actions) {
     fill(view, 
       config.targets.length
         ? cards
-        : h("div", { class: "empty" }, "Ingen rum endnu. Opret et rum med + og tilføj enheder under Enheder."),
+        : h("div", { class: "empty" }, "No rooms yet. Create a room with + and add devices under Devices."),
       unassigned.length
         ? h("p", { class: "muted", style: { textAlign: "center", marginTop: "18px" } },
-            `${unassigned.length} enhed(er) er ikke i et rum endnu – `, h("a", { href: "#devices" }, "placér dem"))
+            `${unassigned.length} device(s) not in a room yet – `, h("a", { href: "#devices" }, "place them"))
         : null,
       config.targets.length > 1
-        ? h("p", { class: "muted", style: { textAlign: "center" } }, "Tip: hold fingeren på et rum og træk det over på et andet for at gruppere dem.")
+        ? h("p", { class: "muted", style: { textAlign: "center" } }, "Tip: press and hold a room, then drag it onto another to group them.")
         : null,
     );
   };
@@ -88,7 +88,7 @@ function card(store, target) {
       slider({
         value: state.brightness,
         min: 1,
-        label: "Lysstyrke",
+        label: "Brightness",
         oninput: (brightness) => { store.interacting = 1; setState({ brightness, on: true }); },
       }),
     ),
@@ -156,7 +156,7 @@ async function groupTargets(store, ontoId, movingId) {
   const groupId = config.groups[ontoId] ? ontoId : undefined;
   try {
     await post("groups", { room_ids: rooms, id: groupId });
-    toast("Rum grupperet");
+    toast("Rooms grouped");
   } catch (e) {
     toast(e.message);
   }
@@ -164,7 +164,7 @@ async function groupTargets(store, ontoId, movingId) {
 
 export function newRoomSheet() {
   let chosen = "sofa";
-  const name = h("input", { type: "text", placeholder: "Fx Stue, Terrasse, Carport" });
+  const name = h("input", { type: "text", placeholder: "E.g. Living room, Terrace, Carport" });
   const icons = h("div", { class: "swatches" }, ROOM_ICONS.map((key) => {
     const b = h("button", { class: `icon-btn${key === chosen ? " active" : ""}`, onclick: () => {
       chosen = key;
@@ -175,16 +175,16 @@ export function newRoomSheet() {
     return b;
   }));
   const s = sheet(h("div", {},
-    h("h2", {}, "Nyt rum"),
-    h("div", { class: "field" }, h("label", {}, "Navn"), name),
-    h("div", { class: "field" }, h("label", {}, "Ikon"), icons),
+    h("h2", {}, "New room"),
+    h("div", { class: "field" }, h("label", {}, "Name"), name),
+    h("div", { class: "field" }, h("label", {}, "Icon"), icons),
     h("button", { class: "btn", onclick: async () => {
       if (!name.value.trim()) return name.focus();
       try {
         await post("rooms", { name: name.value.trim(), icon: chosen });
         s.close();
       } catch (e) { toast(e.message); }
-    } }, "Opret rum"),
+    } }, "Create room"),
   ));
   setTimeout(() => name.focus(), 250);
 }
