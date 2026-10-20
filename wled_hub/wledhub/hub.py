@@ -680,11 +680,21 @@ class Hub:
 
     # --------------------------------------------------------------- grids
 
-    def add_layout(self, name: str) -> str:
+    def add_layout(self, name: str, copy_from: Optional[str] = None) -> str:
+        """New empty grid, or a copy of another one (mapping and background)."""
+        from dataclasses import asdict
+
         from .models import Layout
 
         grid_id = new_id("grid")
-        self.config.layouts[grid_id] = Layout(id=grid_id, name=name.strip()[:60] or "New grid")
+        name = name.strip()[:60] or "New grid"
+        if copy_from and copy_from in self.config.layouts:
+            data = asdict(self.config.layouts[copy_from])
+            for p in data["placements"]:
+                p["id"] = new_id("pl")
+            self.config.layouts[grid_id] = Layout.from_dict({**data, "id": grid_id, "name": name})
+        else:
+            self.config.layouts[grid_id] = Layout(id=grid_id, name=name)
         self.rebuild_maps()
         self.changed()
         return grid_id

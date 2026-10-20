@@ -53,6 +53,30 @@ document.getElementById("tabbar").addEventListener("click", (e) => {
 window.addEventListener("hashchange", () => show(location.hash.slice(1)));
 document.addEventListener("pointerup", () => setTimeout(() => (store.interacting = 0), 300));
 
+// Never re-render a view while the user is dragging a slider (or anything):
+// the hub echoes every change back, and redrawing would swap the slider out
+// from under the finger so it stops after one step. Redraws wait until the
+// pointer is released and no slider has moved for a moment.
+let pointerDown = false, lastInput = 0, idleTimer = null;
+const idleQueue = new Set();
+document.addEventListener("pointerdown", () => { pointerDown = true; }, true);
+document.addEventListener("pointerup", () => { pointerDown = false; }, true);
+document.addEventListener("pointercancel", () => { pointerDown = false; }, true);
+document.addEventListener("input", (e) => { if (["range", "color"].includes(e.target?.type)) lastInput = Date.now(); }, true);
+const busy = () => pointerDown || Date.now() - lastInput < 400;
+function flushIdle() {
+  idleTimer = null;
+  if (busy()) { idleTimer = setTimeout(flushIdle, 150); return; }
+  const queued = [...idleQueue];
+  idleQueue.clear();
+  queued.forEach((fn) => fn());
+}
+store.whenIdle = (fn) => {
+  if (!busy()) return fn();
+  idleQueue.add(fn);
+  if (!idleTimer) idleTimer = setTimeout(flushIdle, 150);
+};
+
 async function loadEffects() {
   try {
     store.effects = await get("effects");

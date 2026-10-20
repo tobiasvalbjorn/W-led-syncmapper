@@ -19,7 +19,7 @@ PATCH  api/rooms/{id}
 DELETE api/rooms/{id}
 POST   api/groups             {room_ids, name?, id?}   group rooms (Sonos)
 DELETE api/groups/{id}                        ungroup
-POST   api/layouts            {name}          new grid (area)
+POST   api/layouts            {name, copy_from?}  new grid (area), optionally a copy of another
 PUT    api/layouts/{id}                       save a grid's mapping
 PATCH  api/layouts/{id}       {name}          rename a grid
 DELETE api/layouts/{id}                       delete a grid (not the last)
@@ -274,7 +274,7 @@ def create_app(hub: Hub, frontend: Path, token: Optional[str] = None,
     @routes.post("/api/layouts")
     async def add_layout(request):
         data = await body(request)
-        return json_response({"id": hub.add_layout(str(data.get("name", "New grid")))}, 201)
+        return json_response({"id": hub.add_layout(str(data.get("name", "New grid")), data.get("copy_from"))}, 201)
 
     @routes.patch("/api/layouts/{grid_id}")
     async def rename_layout(request):

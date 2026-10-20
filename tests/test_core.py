@@ -335,3 +335,43 @@ def test_effects_span_each_grid_on_its_own():
     fitted = hub._fit_per_grid(coords, ["front"] * 3 + ["tv"] * 3, local=False)
     # each grid's own lit area becomes 0..1, independently
     assert [round(x, 3) for x, _ in fitted] == [0.0, 0.5, 1.0, 0.0, 0.5, 1.0]
+
+
+def test_one_effect_across_lamps_of_different_length():
+    """A line sweeping down hits a short and a long vertical strip at the same
+    height at the same moment – also when they are in different rooms."""
+    from wledhub.hub import Hub, _Running
+    from wledhub.store import Store
+    from wledhub import effects as fxm
+    from pathlib import Path
+    import tempfile
+
+    sweep = {"on": True, "brightness": 255, "color": [255, 255, 255], "color2": [0, 0, 0],
+             "effect": {"source": "hub", "id": "line_sweep", "speed": 128, "params": {"angle": 90, "width": 3}}}
+    store = Store(Path(tempfile.mkdtemp()) / "hub.json")
+    store.config = HubConfig.from_dict({
+        "devices": {"short": {"id": "short", "name": "S", "host": "s", "led_count": 20, "room_id": "r1"},
+                    "long": {"id": "long", "name": "L", "host": "l", "led_count": 100, "room_id": "r2"}},
+        "rooms": {"r1": {"id": "r1", "name": "R1", "state": sweep}, "r2": {"id": "r2", "name": "R2", "state": sweep}},
+        "layouts": {"main": {"width": 10, "height": 10, "placements": [
+            {"id": "a", "device_id": "short", "points": [[2, 0], [2, 10]]},
+            {"id": "b", "device_id": "long", "points": [[8, 0], [8, 10]]}]}},
+    })
+    hub = Hub(store, "h", "0")
+    hub.rebuild_maps()
+    for rid, dev in (("r1", "short"), ("r2", "long")):
+        hub._running[rid] = _Running(fxm.create("line_sweep"), "line_sweep", (dev,))
+    checked = 0
+    for t in (1.0, 1.5, 2.0, 2.5, 3.0, 4.0):
+        sent = {}
+        hub.ddp.send = lambda host, pixels, rgbw=False: sent.__setitem__(host, pixels)
+        hub._render_frame(t)
+        ys = {}
+        for host, n in (("s", 20), ("l", 100)):
+            weights = [(i, px[0]) for i, px in enumerate(sent[host]) if px[0] > 40]
+            if weights:  # brightness-weighted centre of the line on this strip, 0 = top, 1 = bottom
+                ys[host] = sum(i * w for i, w in weights) / sum(w for _, w in weights) / (n - 1)
+        if len(ys) == 2:
+            checked += 1
+            assert abs(ys["s"] - ys["l"]) < 0.06, (t, ys)
+    assert checked >= 2  # the line was on both strips at least twice

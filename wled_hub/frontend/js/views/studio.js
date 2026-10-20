@@ -241,9 +241,11 @@ export function render(view, store, actions) {
     } catch (e) { toast(e.message); }
   }
 
+  // the hub echoes every slider move: only redraw the editor once the user lets go
+  function onConfig() { coordCache = null; drawEditor(); resize(); }
   const unsubs = [
     store.onPreview(() => draw()),
-    store.subscribe(() => { coordCache = null; drawEditor(); resize(); }),
+    store.subscribe(() => store.whenIdle(onConfig)),
   ];
   const ro = new ResizeObserver(resize);
   ro.observe(wrap);

@@ -149,6 +149,16 @@ export function render(view, store, actions) {
           if (!dirty || confirm("Leave the current grid without saving?")) { dirty = false; switchGrid(res.id, true); }
         } catch (e) { toast(e.message); }
       } }, "+ Grid"),
+      h("button", { class: "btn secondary small", title: "A copy of this grid – mapping and background", onclick: async () => {
+        const name = prompt("Name of the copy:", `${layout.name} (copy)`);
+        if (!name || !name.trim()) return;
+        if (dirty && !confirm("The copy is made from the saved grid – unsaved changes are not included. Continue?")) return;
+        try {
+          const res = await post("layouts", { name: name.trim(), copy_from: gridId });
+          toast("Grid copied – an LED follows only one grid for effects (the last one), so move or remove the lamps you don't need twice");
+          dirty = false; switchGrid(res.id, true);
+        } catch (e) { toast(e.message); }
+      } }, "Duplicate"),
       h("button", { class: "btn secondary small", onclick: async () => {
         const name = prompt("New name for this grid:", layout.name);
         if (!name || !name.trim()) return;
@@ -1737,6 +1747,11 @@ export function render(view, store, actions) {
         h("span", { class: "muted" }, `LED ${q.start}${q.count ? `–${q.start + q.count - 1}` : "+"} · ${q.shape}`)))),
       cursorPanel(p),
       transformRow(p),
+      Object.keys(store.config.layouts).length > 1 ? h("div", { class: "row", style: { flexWrap: "wrap", gap: "6px", margin: "6px 0" } },
+        h("button", { class: "btn small secondary", title: "Put a copy on another grid, same position and size", onclick: () => toGridSheet(p, false) },
+          lampMode ? "Copy lamp to grid…" : "Copy to grid…"),
+        h("button", { class: "btn small secondary", title: "Move it to another grid", onclick: () => toGridSheet(p, true) },
+          lampMode ? "Move lamp to grid…" : "Move to grid…")) : null,
       (() => {
         const input = h("input", { type: "text", value: p.name || "", placeholder: "E.g. Outer, Inner, Top" });
         input.addEventListener("change", () => { p.name = input.value.trim(); markDirty(); draw(); drawForm(); });
@@ -1797,6 +1812,36 @@ export function render(view, store, actions) {
       h("div", { class: "section-title" }, "Canvas"), canvasFields,
         h("p", { class: "muted", style: { fontSize: "13px" } }, "Mouse: drag on an empty spot to box-select points (then drag them to move), Shift / Space + drag or the middle button pans, scroll zooms, Ctrl+Z undoes."),
     );
+  }
+
+  // Copy or move the selected part (or the whole lamp in lamp mode) to another grid.
+  function toGridSheet(p, move) {
+    const parts = partsFor(p);
+    const others = Object.values(store.config.layouts).filter((g) => g.id !== gridId);
+    const pick = h("select", {}, others.map((g) => h("option", { value: g.id }, g.name)));
+    const s = sheet(h("div", {},
+      h("h2", {}, move ? "Move to another grid" : "Copy to another grid"),
+      h("p", { class: "muted" }, `${parts.length} part(s) of ${devices()[p.device_id]?.name || "?"} – same position and size on the other grid.` +
+        (move ? "" : " Note: an LED follows only one grid for effects (the last grid that has it), so remove it here later if it should belong to the other grid only.")),
+      h("div", { class: "field" }, h("label", {}, "Grid"), pick),
+      h("button", { class: "btn", onclick: async () => {
+        const target = structuredClone(store.config.layouts[pick.value]);
+        for (const q of parts) target.placements.push({ ...structuredClone(q), id: `pl_${Math.random().toString(16).slice(2, 10)}` });
+        try {
+          await put(`layouts/${pick.value}`, target);
+          if (move) {
+            const ids = new Set(parts.map((q) => q.id));
+            layout.placements = layout.placements.filter((q) => !ids.has(q.id));
+            selected = layout.placements[0]?.id || null;
+            markDirty();
+            await save();
+          }
+          s.close();
+          toast(`${move ? "Moved" : "Copied"} to “${target.name}”`);
+          draw(); drawForm(); drawTestPanel();
+        } catch (e) { toast(e.message); }
+      } }, move ? "Move" : "Copy"),
+    ));
   }
 
   // --- creating placements
@@ -1934,7 +1979,10 @@ export function render(view, store, actions) {
 
   const unsubs = [
     store.onPreview(() => { if (!drag) draw(); }),
-    store.subscribe((config) => {
+    store.subscribe(() => store.whenIdle(onConfig)),
+  ];
+  function onConfig() {
+      const config = store.config;
       drawGridBar(); drawOverlayBar();
       if (!config.layouts[gridId]) { dirty = false; return switchGrid(Object.keys(config.layouts)[0], true); }
       if (!dirty) {
@@ -1943,8 +1991,7 @@ export function render(view, store, actions) {
         if (!sel()) selected = layout.placements[0]?.id || null;
         loadBackground(); drawForm(); drawTestPanel();
       }
-    }),
-  ];
+  }
   const ro = new ResizeObserver(resize);
   ro.observe(gridWrap);
   wide.addEventListener("change", resize);

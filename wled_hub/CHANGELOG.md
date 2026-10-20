@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.1
+
+- Sliders can be dragged smoothly again: views no longer redraw while you drag (the hub's echo of each change used to replace the slider under your finger).
+- New colour picker: brightness down to black, R/G/B sliders, hex field, presets incl. black and white, and your own saved colours (stored in the hub).
+- Effects open on "Across the grid" (the effects that run as one across all lamps), with a hint when picking a WLED built-in effect, which runs on each light string by itself.
+- Copy or move a part / whole lamp to another grid, and duplicate a grid.
+
 ## 0.9.0
 
 - **Effect Studio** (new tab): build your own effects from stacked layers – lines, gradient, rings, wave, sparkle, solid colour – with colours, count, thickness, softness, direction, speed, bounce, opacity and blend. Preview live on a room's lights and save; saved effects appear in every room under "My effects" and in Home Assistant as "Custom: <name>".

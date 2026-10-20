@@ -58,7 +58,7 @@ export function render(view, store, actions) {
     );
   };
   draw();
-  return store.subscribe(draw);
+  return store.subscribe(() => store.whenIdle(draw));
 }
 
 function card(store, target) {

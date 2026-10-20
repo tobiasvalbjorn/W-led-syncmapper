@@ -1,13 +1,8 @@
 // Full control sheet for one room or group ("Now Playing" in Sonos terms).
 import { del, patch, post, put, throttled } from "../api.js";
-import { colorWheel } from "../colorwheel.js";
+import { colorPicker } from "../colorpicker.js";
 import { h, icon, rgbCss, sheet, slider, toast, toggle, ROOM_ICONS } from "../ui.js";
 import { livePreview } from "../livepreview.js";
-
-const PRESETS = [
-  [255, 147, 41], [255, 197, 143], [255, 255, 255], [255, 0, 0], [255, 80, 0],
-  [255, 200, 0], [0, 255, 60], [0, 200, 255], [0, 60, 255], [140, 0, 255], [255, 0, 140],
-];
 
 export function effectLabel(state, effects, config) {
   const e = state.effect;
@@ -32,7 +27,10 @@ export function openTargetSheet(store, targetId) {
   let state = stateOf(store.config, target);
   let tab = "color";
   let colorSlot = "color";
-  let effectSource = state.effect.source === "hub" && ["studio", "scene"].includes(state.effect.id) ? "mine" : state.effect.source;
+  // Effects open on "Across the grid" – the effects that run as one across all
+  // lamps – unless the room already runs one of the user's own effects.
+  let effectSource = state.effect.source === "hub" && ["studio", "scene"].includes(state.effect.id) ? "mine" : "hub";
+  let warnedWled = false;
   let filter = "";
 
   const send = throttled((changes) =>
@@ -67,7 +65,7 @@ export function openTargetSheet(store, targetId) {
   };
 
   function colorTab() {
-    const wheel = colorWheel({ size: Math.min(280, window.innerWidth - 80), color: state[colorSlot], onchange: (rgb) => {
+    const picker = colorPicker({ store, color: state[colorSlot], onchange: (rgb) => {
       change({ [colorSlot]: rgb, on: true });
       slotButtons.querySelectorAll(".swatch")[colorSlot === "color" ? 0 : 1].style.background = rgbCss(rgb);
     } });
@@ -78,17 +76,11 @@ export function openTargetSheet(store, targetId) {
         title: i ? "Colour 2 (background / effect)" : "Colour 1",
         onclick: () => { colorSlot = slot; draw(); },
       })));
-    const presets = h("div", { class: "swatches" }, PRESETS.map((c) =>
-      h("button", { class: "swatch", style: { background: rgbCss(c) }, onclick: () => {
-        change({ [colorSlot]: c, on: true });
-        wheel.setColor(c);
-        draw();
-      } })));
     const solid = h("button", { class: "btn secondary small", style: { display: "block", margin: "12px auto 0" },
       onclick: () => { change({ on: true, effect: { source: "wled", id: 0 } }); toast("Solid colour"); } }, "Use as solid colour");
     return h("div", {},
       h("p", { class: "muted", style: { textAlign: "center", margin: "4px 0" } }, "Colour 1 · Colour 2"),
-      slotButtons, wheel, presets, solid);
+      slotButtons, picker.el, solid);
   }
 
   function effectsTab() {
@@ -118,7 +110,14 @@ export function openTargetSheet(store, targetId) {
         .filter((e) => e.name.toLowerCase().includes(filter.toLowerCase()))
         .map((e) => h("button", {
           class: `effect${(effectSource === "mine" ? activeMine === e.id : state.effect.source === effectSource && String(state.effect.id) === String(e.id)) ? " active" : ""}`,
-          onclick: () => { change({ on: true, effect: e.ref || { source: effectSource, id: e.id } }); draw(); },
+          onclick: () => {
+            change({ on: true, effect: e.ref || { source: effectSource, id: e.id } });
+            if (effectSource === "wled" && Number(e.id) !== 0 && !warnedWled && target.device_ids.length) {
+              warnedWled = true;
+              toast("WLED effects run on each light string by itself – longer strips run behind. For one effect across all lamps, pick one under “Across the grid”.", 6000);
+            }
+            draw();
+          },
         }, e.name, e.desc ? h("small", {}, e.desc) : null)));
     };
     search.addEventListener("input", () => { filter = search.value; fill(); });
@@ -235,7 +234,8 @@ export function openTargetSheet(store, targetId) {
     );
   }
 
-  const unsubscribe = store.subscribe((config) => {
+  const onConfig = () => {
+    const config = store.config;
     const t = findTarget(config, targetId);
     if (!t) return s.close(); // room got grouped / deleted
     target = t;
@@ -244,6 +244,7 @@ export function openTargetSheet(store, targetId) {
       state = stateOf(config, target);
       draw();
     }
-  });
+  };
+  const unsubscribe = store.subscribe(() => store.whenIdle(onConfig));
   draw();
 }

@@ -268,6 +268,7 @@ class Settings:
     # WLED's own effects: set the device's segments to the mapped LED ranges
     # so unmapped LEDs stay dark there too (devices with a placement only).
     segments_follow_mapping: bool = True
+    saved_colors: List[str] = field(default_factory=list)  # "#rrggbb" from the colour picker
 
     @classmethod
     def from_dict(cls, data: Optional[dict]) -> "Settings":
@@ -278,6 +279,7 @@ class Settings:
             realtime_timeout=float(data.get("realtime_timeout", 2.5)),
             discovery=bool(data.get("discovery", True)),
             segments_follow_mapping=bool(data.get("segments_follow_mapping", True)),
+            saved_colors=[str(c)[:7] for c in (data.get("saved_colors") or [])][:24],
         )
 
 
