@@ -17,19 +17,27 @@ export const TEMPLATES = {
 export const STARTS = [
   ["bottom-left", "Bottom left"], ["bottom-mid", "Bottom middle"], ["bottom-right", "Bottom right"],
   ["top-left", "Top left"], ["top-mid", "Top middle"], ["top-right", "Top right"],
+  ["left-mid", "Left side"], ["right-mid", "Right side"],
 ];
 
 // Rectangle corners clockwise on screen (y grows downwards): TL, TR, BR, BL.
 function rectLoop(x, y, w, h, start, clockwise) {
   const TL = [x, y], TR = [x + w, y], BR = [x + w, y + h], BL = [x, y + h];
   const cw = [TL, TR, BR, BL];
-  const mids = { "bottom-mid": [[x + w / 2, y + h], 3], "top-mid": [[x + w / 2, y], 0] };
+  // A start on a side sits between two corners: [point, first corner reached
+  // going clockwise, first corner going anticlockwise]. Drag the start point
+  // along the side afterwards if LED 0 is not in the middle.
+  const mids = {
+    "bottom-mid": [[x + w / 2, y + h], BL, BR],
+    "top-mid": [[x + w / 2, y], TR, TL],
+    "left-mid": [[x, y + h / 2], TL, BL],
+    "right-mid": [[x + w, y + h / 2], BR, TR],
+  };
   let ring = clockwise ? cw : [TL, BL, BR, TR];
   let first;
   if (mids[start]) {
-    // A mid-side start sits between two corners; walk from there.
-    const [pt] = mids[start];
-    const after = start === "bottom-mid" ? (clockwise ? BL : BR) : (clockwise ? TR : TL);
+    const [pt, cwNext, ccwNext] = mids[start];
+    const after = clockwise ? cwNext : ccwNext;
     const i = ring.indexOf(after);
     ring = [...ring.slice(i), ...ring.slice(0, i)];
     first = pt;

@@ -100,7 +100,8 @@ A lamp whose strip is split into parts (for example LEDs 0–55 on the outside a
 1. Create a shape from a template (rectangle for a TV backlight, window or door; three sides; L; gable; circle; line), choosing where LED 0 sits and the direction.
 2. The corner guide asks for each corner in turn. Move the cursor with the arrow keys (Shift = 10 LEDs, Home/End) or the on-screen buttons. The hub lights the cursor LED white on the real strip (`POST api/devices/{id}/highlight`), the first LED green and the corners already set amber.
 3. Press Enter when the white LED is in the corner. That LED becomes the corner's anchor.
-4. On free lines, Enter on any LED inserts a bend point there ("Bend here"); drag it to where the corner is.
+4. Any point can be pinned to the cursor LED: click the point, move the cursor, press P. "Close loop" connects the last point back to the first. Dragged points snap into line with the other points (Alt = no snapping), and every change can be undone with Ctrl+Z.
+5. On free lines, Enter on any LED inserts a bend point there ("Bend here"); drag it to where the corner is.
 
 ## Test patterns
 

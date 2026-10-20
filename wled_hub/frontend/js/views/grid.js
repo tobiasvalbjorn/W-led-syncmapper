@@ -47,6 +47,10 @@ export function render(view, store, actions) {
   let hoverLight = false; // highlight mode: the part/lamp under the mouse lights up for real
   let hoverIds = new Set(); // placement ids lit by highlight mode
   let test = null; // running test pattern: { kind, label, timer }
+  let selPoint = null; // index of the point last clicked on the selected line (for "pin to cursor")
+  let snapGuides = null; // { x?, y? } alignment lines shown while dragging a point
+  // Undo/redo: snapshots of the layout as JSON
+  let undoStack = [], redoStack = [], committed = JSON.stringify(layout);
 
   actions.append(
     h("button", { class: "icon-btn", title: "Camera mapping", onclick: () => openScanner(store) }, icon("camera")),
@@ -57,6 +61,8 @@ export function render(view, store, actions) {
   const form = h("div");
   const testPanel = h("div");
   const saveBtn = h("button", { class: "btn", onclick: save }, "Save layout");
+  const undoBtn = h("button", { class: "btn secondary small", title: "Undo (Ctrl+Z)", onclick: () => undo() }, "↶ Undo");
+  const redoBtn = h("button", { class: "btn secondary small", title: "Redo (Ctrl+Y / Ctrl+Shift+Z)", onclick: () => redo() }, "↷ Redo");
   const bgRemoveBtn = h("button", { class: "btn secondary small", hidden: true, onclick: () => {
     layout.background = null; loadBackground(); markDirty();
   } }, "Remove background");
@@ -79,6 +85,7 @@ export function render(view, store, actions) {
         bgRemoveBtn,
         h("button", { class: "btn secondary small", onclick: () => fitSelected() }, "Zoom to selection"),
         h("button", { class: "btn secondary small", onclick: () => zoomTo(1) }, "Show all"),
+        undoBtn, redoBtn,
         saveBtn),
       h("div", { class: "grid-toolbar" },
         h("div", { class: "segmented", style: { margin: 0 } }, modeBtnPart, modeBtnLamp),
@@ -91,7 +98,79 @@ export function render(view, store, actions) {
   const colorFor = (deviceId) => PALETTE[Object.keys(devices()).indexOf(deviceId) % PALETTE.length];
   const sel = () => layout.placements.find((p) => p.id === selected);
   const countOf = (p) => ledCount(p, devices()[p.device_id]?.led_count || 0);
-  const markDirty = () => { dirty = true; saveBtn.textContent = "Save layout •"; };
+  const markDirty = () => {
+    dirty = true; saveBtn.textContent = "Save layout •";
+    if (!drag) record(); // drags are recorded once, when the pointer is released
+  };
+
+  // --- undo / redo ---------------------------------------------------------
+  function record() {
+    const now = JSON.stringify(layout);
+    if (now === committed) return;
+    undoStack.push(committed);
+    if (undoStack.length > 200) undoStack.shift();
+    committed = now;
+    redoStack = [];
+    updateUndoButtons();
+  }
+
+  function restore(json) {
+    committed = json;
+    layout = JSON.parse(json);
+    if (!sel()) selected = layout.placements[0]?.id || null;
+    selPoint = null; guide = null;
+    if (cursor !== null) { cursor = null; stopHighlight(); }
+    dirty = true; saveBtn.textContent = "Save layout •";
+    updateUndoButtons();
+    loadBackground(); resize(); drawForm(); drawTestPanel();
+  }
+
+  function undo() {
+    if (!undoStack.length) return toast("Nothing to undo");
+    redoStack.push(committed);
+    restore(undoStack.pop());
+  }
+
+  function redo() {
+    if (!redoStack.length) return toast("Nothing to redo");
+    undoStack.push(committed);
+    restore(redoStack.pop());
+  }
+
+  function updateUndoButtons() {
+    undoBtn.disabled = !undoStack.length;
+    redoBtn.disabled = !redoStack.length;
+  }
+
+  function onUndoKey(e) {
+    const tag = document.activeElement?.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA") return; // let text fields undo their own typing
+    if (!(e.ctrlKey || e.metaKey)) return;
+    const k = e.key.toLowerCase();
+    if (k === "z" && !e.shiftKey) { e.preventDefault(); undo(); }
+    else if (k === "y" || (k === "z" && e.shiftKey)) { e.preventDefault(); redo(); }
+  }
+  document.addEventListener("keydown", onUndoKey);
+
+  // --- snapping ------------------------------------------------------------
+  // Line a dragged point up with the other points of the same shape, so
+  // sides come out perfectly horizontal/vertical. Alt = no snapping.
+  function snapPoint(p, i, pt, e) {
+    snapGuides = null;
+    if (e?.altKey) return pt;
+    const tol = tolerance() * 0.8;
+    const closed = isClosed(p.points);
+    const last = p.points.length - 1;
+    let [x, y] = pt, bx = tol, by = tol;
+    const guides = {};
+    p.points.forEach((q, k) => {
+      if (k === i || (closed && ((i === 0 && k === last) || (i === last && k === 0)))) return;
+      if (Math.abs(q[0] - pt[0]) < bx) { bx = Math.abs(q[0] - pt[0]); x = q[0]; guides.x = q[0]; }
+      if (Math.abs(q[1] - pt[1]) < by) { by = Math.abs(q[1] - pt[1]); y = q[1]; guides.y = q[1]; }
+    });
+    if (guides.x !== undefined || guides.y !== undefined) snapGuides = guides;
+    return [x, y];
+  }
   const bulgeOf = (p, k) => Number(p.bulges?.[k]) || 0;
 
   // --- geometry: layout units <-> canvas pixels, with zoom around `center`
@@ -250,6 +329,10 @@ export function render(view, store, actions) {
       handles(p).forEach((hp, i) => {
         const [x, y] = toPx(hp);
         const isGuide = guide && guide.steps[guide.k] === i;
+        if (i === selPoint) { // point picked for "pin to cursor"
+          ctx.strokeStyle = "#4facfe"; ctx.lineWidth = 3 * dpr;
+          ctx.beginPath(); ctx.arc(x, y, 12 * dpr, 0, 2 * Math.PI); ctx.stroke();
+        }
         ctx.fillStyle = isGuide ? "#ffb020" : "#fff";
         ctx.beginPath(); ctx.arc(x, y, (isGuide ? 9 : 7) * dpr, 0, 2 * Math.PI); ctx.fill();
         if (anchored && !(isClosed(p.points) && i === p.points.length - 1)) {
@@ -260,6 +343,12 @@ export function render(view, store, actions) {
       if (coords.length && !anchored) { // mark LED 0
         const [x, y] = toPx(p.reverse ? coords[coords.length - 1] : coords[0]);
         ctx.fillStyle = "#fff"; ctx.fillText("0", x + 6 * dpr, y - 6 * dpr);
+      }
+      if (snapGuides && drag) {
+        ctx.strokeStyle = "rgba(79,172,254,.8)"; ctx.lineWidth = 1 * dpr; ctx.setLineDash([6 * dpr, 4 * dpr]);
+        if (snapGuides.x !== undefined) { const [gx] = toPx([snapGuides.x, 0]); ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, canvas.height); ctx.stroke(); }
+        if (snapGuides.y !== undefined) { const [, gy] = toPx([0, snapGuides.y]); ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(canvas.width, gy); ctx.stroke(); }
+        ctx.setLineDash([]);
       }
       if (cursor !== null && coords[cursor]) {
         const [x, y] = toPx(p.reverse ? coords[coords.length - 1 - cursor] : coords[cursor]);
@@ -418,6 +507,26 @@ export function render(view, store, actions) {
     stopHighlight(); draw(); drawForm();
   }
 
+  // Pin the point you clicked (blue ring) to the LED under the cursor – for
+  // any shape, not only templates. Points before it must have lower LEDs,
+  // points after it higher ones; they are pushed along if needed.
+  function pinPointHere() {
+    const p = sel();
+    if (!p || p.shape !== "line" || cursor === null) return;
+    if (selPoint === null) return toast("Click a point on the shape first, then move the cursor and press P");
+    const last = p.points.length - 1;
+    if (selPoint === 0 || (isClosed(p.points) && selPoint === last)) return toast("The start point is always LED 0 of this part");
+    const n = countOf(p);
+    if (!anchorsValid(p)) p.anchors = anchorsFromLengths(p.points, n, p.bulges);
+    const led = p.reverse ? n - 1 - cursor : cursor;
+    p.anchors[selPoint] = led;
+    for (let k = selPoint - 1; k > 0; k--) p.anchors[k] = Math.min(p.anchors[k], p.anchors[k + 1]);
+    for (let k = selPoint + 1; k < p.anchors.length; k++) p.anchors[k] = Math.max(p.anchors[k], p.anchors[k - 1]);
+    if (isClosed(p.points)) p.anchors[last] = Math.max(p.anchors[last], n);
+    markDirty(); draw(); drawForm(); syncHighlight();
+    toast(`Point ${selPoint + 1} is now LED ${led}`);
+  }
+
   // Bend at the cursor LED: a new point appears where that LED is drawn now;
   // drag it to the real corner. Existing corners keep their LEDs, and an arc
   // is split into two arcs that keep the same curve.
@@ -485,6 +594,8 @@ export function render(view, store, actions) {
       Home: () => setCursor(0),
       End: () => setCursor(countOf(p) - 1),
       Enter: () => (guide ? pinCorner() : bendHere()),
+      p: () => pinPointHere(),
+      P: () => pinPointHere(),
       Escape: () => cursorOff(),
     };
     if (handlers[e.key]) { e.preventDefault(); handlers[e.key](); }
@@ -524,6 +635,8 @@ export function render(view, store, actions) {
           : p.shape === "line" ? h("button", { class: "btn small", onclick: bendHere }, "Bend here (Enter)") : null,
         guide ? b("Skip corner", () => { guide.k++; if (guide.k >= guide.steps.length) guide = null; draw(); drawForm(); }) : null,
         p.shape !== "matrix" ? b("Split here", splitHere, "Split the string into two parts at the cursor – e.g. outer and inner ring") : null,
+        p.shape === "line" && selPoint !== null && selPoint > 0 && !(isClosed(p.points) && selPoint === p.points.length - 1)
+          ? h("button", { class: "btn small", onclick: pinPointHere, title: "The blue-ringed point sits at the cursor LED" }, `Pin point ${selPoint + 1} here (P)`) : null,
         b("Close cursor (Esc)", cursorOff)),
       h("p", { class: "muted", style: { margin: "8px 0 0", fontSize: "13px" } },
         "Arrow keys move 1 LED, Shift+arrow moves 10. White = cursor, green = first LED, orange = corners already set; the sides between corners show in their own colours."));
@@ -621,13 +734,19 @@ export function render(view, store, actions) {
     const tol = tolerance();
     const p = sel();
     if (p && addMode && p.shape === "line") {
-      p.points.push(pt);
+      p.points.push(snapPoint(p, -1, pt, e));
+      snapGuides = null;
       p.anchors = []; // free drawing: spread evenly again
       markDirty(); draw(); drawForm(); return;
     }
     if (p) {
       const i = handles(p).findIndex((hp) => Math.hypot(hp[0] - pt[0], hp[1] - pt[1]) < tol);
-      if (i >= 0) { drag = { p, i, last: pt }; canvas.setPointerCapture(e.pointerId); return; }
+      if (i >= 0) {
+        selPoint = p.shape === "line" ? i : null;
+        drag = { p, i, last: pt }; canvas.setPointerCapture(e.pointerId);
+        draw(); if (cursor !== null) drawForm();
+        return;
+      }
       const k = bendHandles(p).findIndex((hp) => Math.hypot(hp[0] - pt[0], hp[1] - pt[1]) < tol);
       if (k >= 0) { drag = { p, bend: k, last: pt }; canvas.setPointerCapture(e.pointerId); return; }
     }
@@ -642,7 +761,7 @@ export function render(view, store, actions) {
       setCursor(best.reverse ? countOf(best) - 1 - bestI : bestI);
       return;
     }
-    if (best.id !== selected) { stopHighlight(); cursor = null; guide = null; }
+    if (best.id !== selected) { stopHighlight(); cursor = null; guide = null; selPoint = null; }
     selected = best.id;
     drag = { p: best, i: -1, last: pt, parts: partsFor(best) }; // drag the part, or the whole lamp
     canvas.setPointerCapture(e.pointerId);
@@ -663,7 +782,7 @@ export function render(view, store, actions) {
       drag.last = [e.clientX, e.clientY];
       return resize();
     }
-    const pt = fromEvent(e);
+    let pt = fromEvent(e);
     const { p, i } = drag;
     if (drag.bend !== undefined) {
       // bulge from how far the pointer is from the chord: s = sagitta, bulge = 2s / chord
@@ -694,6 +813,7 @@ export function render(view, store, actions) {
       p.width = Math.max(0.1, p.width); p.height = Math.max(0.1, p.height);
     } else {
       const closed = isClosed(p.points);
+      pt = snapPoint(p, i, pt, e);
       p.points[i] = pt;
       // keep closed shapes closed when moving the start/end point
       if (closed && i === 0) p.points[p.points.length - 1] = pt;
@@ -701,7 +821,11 @@ export function render(view, store, actions) {
     }
     markDirty(); draw();
   });
-  canvas.addEventListener("pointerup", () => { if (drag && !drag.pan) drawForm(); drag = null; });
+  canvas.addEventListener("pointerup", () => {
+    const was = drag;
+    drag = null; snapGuides = null;
+    if (was && !was.pan) { record(); drawForm(); draw(); }
+  });
   canvas.addEventListener("pointerleave", (e) => { if (hoverLight && e.pointerType === "mouse" && !drag) lightParts([]); });
 
   // Nearest LED within tolerance, else a (possibly curved) segment, else a matrix area.
@@ -796,6 +920,22 @@ export function render(view, store, actions) {
       p.shape === "line" ? h("div", { class: "row", style: { flexWrap: "wrap" } },
         h("button", { class: `btn small ${addMode ? "" : "secondary"}`, onclick: () => { addMode = !addMode; drawForm(); } },
           addMode ? "Done adding points" : "Draw points"),
+        p.points.length >= 3 && !isClosed(p.points)
+          ? h("button", { class: "btn small secondary", title: "Connect the last point to the first", onclick: () => {
+              const n = countOf(p);
+              p.points.push([...p.points[0]]);
+              if (anchorsValid({ ...p, points: p.points.slice(0, -1) })) p.anchors.push(Math.max(n, p.anchors[p.anchors.length - 1]));
+              else p.anchors = [];
+              markDirty(); draw(); drawForm(); drawTestPanel();
+              toast("Loop closed – the LEDs after the last point now run back to the start");
+            } }, "Close loop")
+          : isClosed(p.points) && p.points.length > 3
+            ? h("button", { class: "btn small secondary", title: "Remove the connection back to the start", onclick: () => {
+                p.points.pop();
+                if (p.anchors?.length > p.points.length) p.anchors.pop();
+                if (p.bulges?.length > p.points.length - 1) p.bulges = p.bulges.slice(0, p.points.length - 1);
+                markDirty(); draw(); drawForm(); drawTestPanel();
+              } }, "Open loop") : null,
         h("button", { class: "btn small secondary", onclick: () => {
           if (p.points.length <= 2) return;
           p.points.pop();
@@ -953,6 +1093,7 @@ export function render(view, store, actions) {
     store.subscribe((config) => {
       if (!dirty) {
         layout = structuredClone(config.layout);
+        committed = JSON.stringify(layout); undoStack = []; redoStack = []; updateUndoButtons();
         if (!sel()) selected = layout.placements[0]?.id || null;
         loadBackground(); drawForm(); drawTestPanel();
       }
@@ -964,11 +1105,13 @@ export function render(view, store, actions) {
   loadBackground();
   drawForm();
   drawTestPanel();
+  updateUndoButtons();
   return () => {
     unsubs.forEach((u) => u());
     ro.disconnect();
     wide.removeEventListener("change", resize);
     document.removeEventListener("keydown", onKey);
+    document.removeEventListener("keydown", onUndoKey);
     clearInterval(test?.timer);
     stopHighlight();
   };

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0
+
+- Grid editor: undo / redo (Ctrl+Z, Ctrl+Y or Ctrl+Shift+Z, and buttons).
+- Dragged points snap into line with the other points of the shape, so sides come out straight (hold Alt to drag freely).
+- "Close loop" connects the last point to the first (and "Open loop" undoes it).
+- Rectangle template can start on the left or right side (LED 0 part-way down a side).
+- Pin any point to the LED under the cursor: click the point, move the cursor, press P.
+
 ## 0.2.0
 
 - The whole app is in English.
