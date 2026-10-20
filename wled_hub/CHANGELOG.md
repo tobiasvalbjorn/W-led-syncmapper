@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.1
+
+- Draw LED by LED: the opposite arrow key removes the last LED of the current side (it never goes past the last corner; holding it stops there). Same arrow adds, Enter makes a corner, and the next arrow after a corner starts the new side.
+
 ## 0.5.0
 
 - A point on a straight line between its neighbours is not a corner: the stretches on both sides count as one side (also across the start of a closed loop), e.g. LED 0 half-way up the side of a rectangle. Affects colour per side and side highlight.

@@ -555,7 +555,7 @@ export function render(view, store, actions) {
     };
     const s = sheet(h("div", {},
       h("h2", {}, "Draw LED by LED"),
-      h("p", { class: "muted" }, "LED 0 is placed in the middle of the view. Press an arrow key to add the next LED in that direction – the newest LED lights up on the real strip. When it reaches a corner, press Enter to make a corner there, then continue with the next arrow key. An arrow key in a new direction without Enter turns the current side instead. Backspace removes the last LED, Esc finishes."),
+      h("p", { class: "muted" }, "LED 0 is placed in the middle of the view. Press an arrow key to add the next LED in that direction – the newest LED lights up on the real strip. When it reaches a corner, press Enter to make a corner there, then continue with the next arrow key. The opposite arrow key takes the last LED back off; an arrow key at a right angle (before Enter) turns the current side. Backspace removes the last LED (also past a corner), Esc finishes."),
       field("Device", dev),
       h("div", { class: "row" },
         field("First LED", number("start", { min: 0 })),
@@ -602,17 +602,30 @@ export function render(view, store, actions) {
     draw(); drawWalkPanel(); drawForm();
   }
 
-  function walkStep(dir, steps = 1) {
+  function walkStep(dir, steps = 1, repeat = false) {
     if (!walk) return;
+    // Holding the opposite key empties the side and stops at the corner; it
+    // only starts a new direction on a fresh key press.
+    if (!walk.dir && walk.emptiedBy && repeat && walk.emptiedBy[0] === dir[0] && walk.emptiedBy[1] === dir[1]) return;
+    walk.emptiedBy = null;
     const { leds, spacing } = walk;
+    const base = () => Math.max(0, ...walk.corners); // LED index of the last corner (or LED 0)
     for (let k = 0; k < steps; k++) {
+      // The opposite arrow takes LEDs back off the current side (never past
+      // the last corner – Backspace does that).
+      if (walk.dir && dir[0] === -walk.dir[0] && dir[1] === -walk.dir[1]) {
+        if (leds.length - 1 <= base()) break;
+        leds.pop();
+        if (leds.length - 1 <= base()) { walk.dir = null; walk.emptiedBy = dir; break; } // side empty: next press picks a new direction
+        continue;
+      }
       if (leds.length >= walk.max) { toast("That was the last LED on the strip"); return finishWalk(); }
       if (walk.dir && (walk.dir[0] !== dir[0] || walk.dir[1] !== dir[1])) {
         // A new direction without Enter turns the current side: every LED
         // since the last corner is laid out again in the new direction.
-        const base = Math.max(0, ...walk.corners);
-        for (let i = base + 1; i < leds.length; i++) {
-          leds[i] = [leds[base][0] + dir[0] * spacing * (i - base), leds[base][1] + dir[1] * spacing * (i - base)];
+        const b = base();
+        for (let i = b + 1; i < leds.length; i++) {
+          leds[i] = [leds[b][0] + dir[0] * spacing * (i - b), leds[b][1] + dir[1] * spacing * (i - b)];
         }
       }
       walk.dir = dir;
@@ -635,7 +648,8 @@ export function render(view, store, actions) {
     walk.leds.pop();
     walk.corners.delete(walk.leds.length); // the removed LED can no longer be a corner
     const n = walk.leds.length;
-    if (n >= 2) {
+    if (n - 1 <= Math.max(0, ...walk.corners)) walk.dir = null; // back at a corner: next arrow starts a new side
+    else if (n >= 2) {
       const a = walk.leds[n - 2], b = walk.leds[n - 1];
       walk.dir = [Math.sign(Math.round((b[0] - a[0]) / walk.spacing)), Math.sign(Math.round((b[1] - a[1]) / walk.spacing))];
     } else walk.dir = null;
@@ -661,7 +675,7 @@ export function render(view, store, actions) {
   function onWalkKey(e) {
     const tag = document.activeElement?.tagName;
     if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
-    if (DIRS[e.key]) { e.preventDefault(); return walkStep(DIRS[e.key], e.shiftKey ? 10 : 1); }
+    if (DIRS[e.key]) { e.preventDefault(); return walkStep(DIRS[e.key], e.shiftKey ? 10 : 1, e.repeat); }
     if (e.key === "Enter") { e.preventDefault(); return walkCorner(); }
     if (e.key === "Backspace") { e.preventDefault(); return walkBack(); }
     if (e.key === "Escape") { e.preventDefault(); return finishWalk(); }
@@ -683,7 +697,7 @@ export function render(view, store, actions) {
           b("Corner (Enter)", walkCorner), b("Undo LED (⌫)", walkBack),
           h("button", { class: "btn small", onclick: finishWalk }, "Finish (Esc)")),
         h("p", { class: "muted", style: { margin: "8px 0 0", fontSize: "13px" } },
-          "The newest LED is white on the real strip, corners are amber. Only Enter makes a corner – another arrow key before that turns the current side.")));
+          "The newest LED is white on the real strip, corners are amber. Same arrow = add, opposite arrow = remove, Enter = corner (then any arrow starts the next side).")));
   }
 
   // --- test patterns ----------------------------------------------------------
