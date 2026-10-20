@@ -1,3 +1,3 @@
 """WLED Hub – central sync and control hub for WLED devices."""
 
-__version__ = "0.4.1"
+__version__ = "0.5.0"

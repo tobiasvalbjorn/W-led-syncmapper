@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.0
+
+- A point on a straight line between its neighbours is not a corner: the stretches on both sides count as one side (also across the start of a closed loop), e.g. LED 0 half-way up the side of a rectangle. Affects colour per side and side highlight.
+- Box selection: drag on an empty spot to select points in several shapes (or a whole lamp) and drag them together. Esc deselects. Pan is now Shift / Space + drag, the middle mouse button, or a touch drag.
+- "Pixel view": the canvas shows only the mapped pixels, white on black.
+- Test pattern "All mapped white": every mapped LED on every device white, everything else off.
+
 ## 0.4.1
 
 - Draw LED by LED: only Enter makes a corner. An arrow key in a new direction before Enter turns the current side instead.

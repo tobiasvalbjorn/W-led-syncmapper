@@ -106,6 +106,10 @@ A lamp whose strip is split into parts (for example LEDs 0–55 on the outside a
 4. Any point can be pinned to the cursor LED: click the point, move the cursor, press P. "Close loop" connects the last point back to the first. Dragged points snap into line with the other points (Alt = no snapping), and every change can be undone with Ctrl+Z.
 5. On free lines, Enter on any LED inserts a bend point there ("Bend here"); drag it to where the corner is.
 
+## Sides
+
+A "side" is the stretch of LEDs between two corners. A point that lies on a straight line between its neighbours (both segments straight, same direction) is not a corner, so the segments on either side of it form one side – also across the start of a closed loop, for a strip whose LED 0 sits part-way along a side.
+
 ## Test patterns
 
 The grid editor can show test patterns on the real lights for the selected part or whole lamp: one colour per part and per side (stretch between corners, for shapes with up to 12 segments), a chase that runs along each side to show the wiring direction, a rainbow, or white. The hub renders them from `POST api/devices/{id}/highlight {"ranges": [[start, count, [r, g, b]]], "effect": "solid" | "chase" | "rainbow"}`. While the LED cursor is active, the sides are shown in dimmed versions of the same colours.

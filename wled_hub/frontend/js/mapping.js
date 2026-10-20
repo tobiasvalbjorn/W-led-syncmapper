@@ -142,14 +142,48 @@ export function placementCoords(p, deviceLeds) {
 // the placement (wiring order). Only for line shapes with few points – a
 // shape drawn with many points would just give a rainbow of tiny stretches.
 export const MAX_COLOURED_SEGMENTS = 12;
+
+// A point that sits on a straight line between its neighbours (both
+// segments straight and pointing the same way) is not a corner – e.g. LED 0
+// half-way up the side of a rectangle. The segments on both sides of it
+// belong to the same side.
+function straightThrough(p, k) {
+  const pts = p.points, last = pts.length - 1;
+  if (k <= 0 || k >= last) {
+    if (!(k === 0 && isClosed(pts))) return false;
+  }
+  const prevSeg = k === 0 ? last - 1 : k - 1, nextSeg = k;
+  if (bulgeAt(p.bulges, prevSeg) || bulgeAt(p.bulges, nextSeg)) return false;
+  const a = pts[prevSeg], b = pts[k], c = pts[nextSeg + 1];
+  const v1 = [b[0] - a[0], b[1] - a[1]], v2 = [c[0] - b[0], c[1] - b[1]];
+  const l1 = Math.hypot(...v1), l2 = Math.hypot(...v2);
+  if (!l1 || !l2) return false;
+  const cross = (v1[0] * v2[1] - v1[1] * v2[0]) / (l1 * l2), dot = (v1[0] * v2[0] + v1[1] * v2[1]) / (l1 * l2);
+  return Math.abs(cross) < 0.02 && dot > 0;
+}
+
+// The sides of a line shape: [{ ranges: [[first, count], ...], segs: [segment indexes] }],
+// LED ranges relative to the placement (wiring order). Segments joined by a
+// straight-through point form one side; on a closed loop that also works
+// across the start. Null for shapes with many points (hand-drawn curves),
+// where per-side colours would just be noise.
 export function cornerSegments(p, count) {
   if (p.shape !== "line" || (p.points || []).length < 2 || p.points.length - 1 > MAX_COLOURED_SEGMENTS) return null;
   const anchors = anchorsValid(p) ? p.anchors : anchorsFromLengths(p.points, count, p.bulges);
-  const out = [];
+  const segRange = [];
   for (let j = 0; j < anchors.length - 1; j++) {
     const a = Math.max(0, anchors[j]), b = Math.min(count, j === anchors.length - 2 ? Math.max(anchors[j + 1], count) : anchors[j + 1]);
-    if (b > a) out.push([a, b - a]);
+    segRange.push(b > a ? [a, b - a] : null);
   }
+  const sides = [];
+  segRange.forEach((r, k) => {
+    if (k > 0 && straightThrough(p, k)) sides[sides.length - 1].segs.push(k);
+    else sides.push({ segs: [k] });
+  });
+  if (sides.length > 1 && straightThrough(p, 0)) sides[0].segs.unshift(...sides.pop().segs);
+  const out = sides
+    .map((s) => ({ segs: s.segs, ranges: s.segs.map((k) => segRange[k]).filter(Boolean) }))
+    .filter((s) => s.ranges.length);
   return out.length ? out : null;
 }
 

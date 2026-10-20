@@ -32,6 +32,7 @@ const TESTS = [
   ["chase", "Chase", "A running light on every stretch – shows the wiring direction"],
   ["rainbow", "Rainbow", "A rainbow along each part"],
   ["white", "White", "Everything in the selection white"],
+  ["mapped", "All mapped white", "Every LED on the grid white, on all devices – everything else off"],
 ];
 
 export function render(view, store, actions) {
@@ -45,7 +46,12 @@ export function render(view, store, actions) {
   let highlighted = null; // device id currently showing something on the strip
   let scope = "part"; // what selection/highlight covers: "side" | "part" | "lamp"
   let lampMode = false; // scope === "lamp": select/drag/highlight every part of a device
-  let hoverSeg = null; // { pid, a, c }: side lit by highlight mode (relative LED range)
+  let hoverSeg = null; // { pid, ranges }: side lit by highlight mode (relative LED ranges)
+  let pixelView = false; // canvas shows only the mapped pixels, white on black
+  // Box selection: [{ pid, k }] points (k = point index; k = "all" for a matrix)
+  let multi = [];
+  let box = null; // [x0, y0, x1, y1] in layout units while dragging a selection box
+  let spaceDown = false; // Space held: drag pans the view
   let walk = null; // "Draw LED by LED" state, see startWalk()
   let hoverLight = false; // highlight mode: the part/lamp under the mouse lights up for real
   let hoverIds = new Set(); // placement ids lit by highlight mode
@@ -73,6 +79,8 @@ export function render(view, store, actions) {
   const modeBtnPart = h("button", { class: "active", onclick: () => setScope("part"), title: "Select, move and highlight one part" }, "Part");
   const modeBtnLamp = h("button", { onclick: () => setScope("lamp"), title: "Select, move and highlight every part of the lamp" }, "Whole lamp");
   const walkPanel = h("div");
+  const pixelBtn = h("button", { class: "btn secondary small", title: "Show only the mapped pixels, white on black",
+    onclick: () => { pixelView = !pixelView; pixelBtn.classList.toggle("secondary", !pixelView); draw(); } }, "Pixel view");
   const hoverBtn = h("button", { class: "btn secondary small", onclick: () => setHoverLight(!hoverLight),
     title: "Lights up the part/lamp under the mouse (or that you tap) on the real device" }, "Highlight: off");
   // Phone: grid on top, tools below. PC (wide screen): tools in a scrolling
@@ -91,6 +99,7 @@ export function render(view, store, actions) {
         bgRemoveBtn,
         h("button", { class: "btn secondary small", onclick: () => fitSelected() }, "Zoom to selection"),
         h("button", { class: "btn secondary small", onclick: () => zoomTo(1) }, "Show all"),
+        pixelBtn,
         undoBtn, redoBtn,
         saveBtn),
       h("div", { class: "grid-toolbar" },
@@ -125,7 +134,7 @@ export function render(view, store, actions) {
     committed = json;
     layout = JSON.parse(json);
     if (!sel()) selected = layout.placements[0]?.id || null;
-    selPoint = null; guide = null;
+    selPoint = null; guide = null; multi = [];
     if (cursor !== null) { cursor = null; stopHighlight(); }
     dirty = true; saveBtn.textContent = "Save layout •";
     updateUndoButtons();
@@ -150,6 +159,7 @@ export function render(view, store, actions) {
   }
 
   function onUndoKey(e) {
+    if (e.key === "Escape" && multi.length && cursor === null && !walk) { clearMulti(); return; }
     const tag = document.activeElement?.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA") return; // let text fields undo their own typing
     if (!(e.ctrlKey || e.metaKey)) return;
@@ -265,6 +275,7 @@ export function render(view, store, actions) {
   function draw() {
     const dpr = window.devicePixelRatio || 1;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (pixelView) return drawPixels();
     ctx.fillStyle = "#0b0b0d";
     ctx.fillRect(ox, oy, layout.width * scale, layout.height * scale);
     if (bgImage) {
@@ -296,7 +307,7 @@ export function render(view, store, actions) {
         } else ctx.fillStyle = colorFor(p.device_id);
         ctx.beginPath(); ctx.arc(px, py, r, 0, 2 * Math.PI); ctx.fill();
         const rel = p.reverse ? coords.length - 1 - i : i;
-        const inSide = !hoverSeg || hoverSeg.pid !== p.id || (rel >= hoverSeg.a && rel < hoverSeg.a + hoverSeg.c);
+        const inSide = !hoverSeg || hoverSeg.pid !== p.id || hoverSeg.ranges.some(([a, c]) => rel >= a && rel < a + c);
         if (hoverIds.has(p.id) && inSide) { // lit by highlight mode
           ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
           ctx.beginPath(); ctx.arc(px, py, r + 2.5, 0, 2 * Math.PI); ctx.stroke();
@@ -368,6 +379,45 @@ export function render(view, store, actions) {
         ctx.font = `${11 * dpr}px sans-serif`;
       }
     }
+    drawSelection();
+  }
+
+  // Box selection overlay: the box being dragged and rings on selected points.
+  function drawSelection() {
+    const dpr = window.devicePixelRatio || 1;
+    ctx.strokeStyle = "#4facfe"; ctx.lineWidth = 2 * dpr;
+    for (const m of multi) {
+      const q = byId(m.pid);
+      if (!q) continue;
+      if (m.k === "all") {
+        const [x, y] = toPx([q.x, q.y]);
+        ctx.strokeRect(x - 4, y - 4, q.width * scale + 8, q.height * scale + 8);
+      } else {
+        const [x, y] = toPx(q.points[m.k]);
+        ctx.beginPath(); ctx.arc(x, y, 9 * dpr, 0, 2 * Math.PI); ctx.stroke();
+      }
+    }
+    if (box) {
+      const [x0, y0] = toPx([box[0], box[1]]), [x1, y1] = toPx([box[2], box[3]]);
+      ctx.fillStyle = "rgba(79,172,254,.12)"; ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+      ctx.setLineDash([5 * dpr, 4 * dpr]); ctx.strokeRect(x0, y0, x1 - x0, y1 - y0); ctx.setLineDash([]);
+    }
+  }
+
+  // Pixel view: the mapping as an image – black canvas, every mapped LED a white dot.
+  function drawPixels() {
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#fff";
+    const r = Math.max(1.2, Math.min(5, scale * 0.05));
+    for (const p of layout.placements) {
+      const d = devices()[p.device_id];
+      if (!d) continue;
+      for (const c of placementCoords(p, d.led_count)) {
+        const [x, y] = toPx(c);
+        ctx.beginPath(); ctx.arc(x, y, r, 0, 2 * Math.PI); ctx.fill();
+      }
+    }
   }
 
   // --- showing things on the real strip --------------------------------------
@@ -388,17 +438,24 @@ export function render(view, store, actions) {
   // Device LED ranges for a part: one per stretch between corners when the
   // shape has few points (rectangle, U, circle…), otherwise the whole part.
   // Relative ranges are mapped to device LEDs (start offset and reverse).
-  function partRanges(p, bySide) {
+  // Relative LED range -> device LEDs (start offset and reverse).
+  const toAbs = (p, [a, c]) => {
     const n = countOf(p), start = p.start || 0;
-    const rel = (bySide && cornerSegments(p, n)) || [[0, n]];
-    return rel.map(([a, c]) => [p.reverse ? start + n - (a + c) : start + a, c]);
+    return [p.reverse ? start + n - (a + c) : start + a, c];
+  };
+
+  // Sides of a part as lists of device LED ranges (one list = one side).
+  function partSides(p, bySide) {
+    const n = countOf(p);
+    const sides = (bySide && cornerSegments(p, n)) || [{ ranges: [[0, n]] }];
+    return sides.map((s) => s.ranges.map((r) => toAbs(p, r)));
   }
 
   function colourRanges(parts, bySide, k = 1) {
     let i = 0;
-    return parts.flatMap((q) => partRanges(q, bySide).map(([s, c]) => {
-      const col = SEG_COLOURS[i++ % SEG_COLOURS.length];
-      return [s, c, col.map((v) => Math.round(v * k))];
+    return parts.flatMap((q) => partSides(q, bySide).flatMap((side) => {
+      const col = SEG_COLOURS[i++ % SEG_COLOURS.length].map((v) => Math.round(v * k));
+      return side.map(([s, c]) => [s, c, col]);
     }));
   }
 
@@ -423,7 +480,7 @@ export function render(view, store, actions) {
 
   function lightParts(parts, seg = null) {
     const ids = new Set(parts.map((q) => q.id));
-    const key = (set, sg) => [...set].join() + (sg ? `:${sg.a}:${sg.c}` : "");
+    const key = (set, sg) => [...set].join() + (sg ? `:${JSON.stringify(sg.ranges)}` : "");
     if (key(ids, seg) === key(hoverIds, hoverSeg)) return;
     hoverIds = ids; hoverSeg = seg;
     draw();
@@ -432,10 +489,7 @@ export function render(view, store, actions) {
     if (highlighted && highlighted !== deviceId) stopHighlight();
     highlighted = deviceId;
     let ranges = parts.map((q) => [q.start || 0, countOf(q)]);
-    if (seg) { // one side: map the relative range to device LEDs
-      const q = parts[0], n = countOf(q), st = q.start || 0;
-      ranges = [[q.reverse ? st + n - (seg.a + seg.c) : st + seg.a, seg.c]];
-    }
+    if (seg) ranges = seg.ranges.map((r) => toAbs(parts[0], r)); // one side only
     sendHighlight(deviceId, { ranges });
   }
 
@@ -443,15 +497,16 @@ export function render(view, store, actions) {
   // range – or null when the shape has no sides to speak of.
   function sideAt(p, hit) {
     const n = countOf(p);
-    const segs = cornerSegments(p, n);
-    if (!segs) return null;
-    let k = hit.seg;
+    const sides = cornerSegments(p, n);
+    if (!sides) return null;
+    let side;
     if (hit.i >= 0) {
       const rel = p.reverse ? n - 1 - hit.i : hit.i;
-      k = segs.findIndex(([a, c]) => rel >= a && rel < a + c);
+      side = sides.find((sd) => sd.ranges.some(([a, c]) => rel >= a && rel < a + c));
+    } else if (hit.seg !== undefined) {
+      side = sides.find((sd) => sd.segs.includes(hit.seg));
     }
-    if (k === undefined || k < 0 || !segs[k]) return null;
-    return { pid: p.id, a: segs[k][0], c: segs[k][1] };
+    return side ? { pid: p.id, ranges: side.ranges } : null;
   }
 
   function lightHit(hit) {
@@ -633,7 +688,10 @@ export function render(view, store, actions) {
 
   // --- test patterns ----------------------------------------------------------
 
+  let testDevices = []; // devices lit by the "All mapped white" test
+
   function runTest(kind) {
+    if (kind === "mapped") return runMappedTest();
     const p = sel();
     if (!p) return toast("Select a light string first");
     if (cursor !== null) cursorOff();
@@ -653,8 +711,31 @@ export function render(view, store, actions) {
     };
     clearInterval(test?.timer);
     send();
+    for (const id of testDevices) del(`devices/${id}/highlight`).catch(() => {});
+    testDevices = [];
     const what = lampMode ? devices()[p.device_id]?.name : `${devices()[p.device_id]?.name}${p.name ? ` · ${p.name}` : ""}`;
     test = { kind, label: `${TESTS.find((t) => t[0] === kind)[1]} on ${what}`, timer: setInterval(send, 30000) };
+    drawTestPanel();
+  }
+
+  // Every mapped LED on every device white, unmapped LEDs off: shows at a
+  // glance which LEDs are on the grid and which are missing.
+  function runMappedTest() {
+    if (cursor !== null) cursorOff();
+    if (hoverLight) setHoverLight(false);
+    stopHighlight();
+    clearInterval(test?.timer);
+    const byDevice = {};
+    for (const q of layout.placements) {
+      if (!devices()[q.device_id]) continue;
+      (byDevice[q.device_id] ||= []).push([q.start || 0, countOf(q), [220, 220, 220]]);
+    }
+    testDevices = Object.keys(byDevice);
+    if (!testDevices.length) return toast("Nothing is mapped yet");
+    const send = () => testDevices.forEach((id) =>
+      post(`devices/${id}/highlight`, { ranges: byDevice[id], effect: "solid" }).catch((e) => toast(e.message)));
+    send();
+    test = { kind: "mapped", label: `All mapped LEDs white on ${testDevices.length} device(s)`, timer: setInterval(send, 30000) };
     drawTestPanel();
   }
 
@@ -663,6 +744,8 @@ export function render(view, store, actions) {
     clearInterval(test.timer);
     test = null;
     stopHighlight();
+    for (const id of testDevices) del(`devices/${id}/highlight`).catch(() => {});
+    testDevices = [];
     drawTestPanel();
   }
 
@@ -918,6 +1001,72 @@ export function render(view, store, actions) {
     drawForm();
   }
 
+  // --- box selection ---------------------------------------------------------
+  const byId = (id) => layout.placements.find((q) => q.id === id);
+
+  function selectBox([x0, y0, x1, y1]) {
+    const [ax, bx] = [Math.min(x0, x1), Math.max(x0, x1)], [ay, by] = [Math.min(y0, y1), Math.max(y0, y1)];
+    const inside = ([x, y]) => x >= ax && x <= bx && y >= ay && y <= by;
+    const out = [];
+    for (const q of layout.placements) {
+      if (q.shape === "matrix") {
+        if (inside([q.x, q.y]) && inside([q.x + q.width, q.y + q.height])) out.push({ pid: q.id, k: "all" });
+        continue;
+      }
+      const last = q.points.length - 1, closed = isClosed(q.points);
+      q.points.forEach((pt, k) => {
+        if (closed && k === last) return; // the closing point moves with point 0
+        if (inside(pt)) out.push({ pid: q.id, k });
+      });
+    }
+    return out;
+  }
+
+  function multiHas(q, k) {
+    return multi.some((m) => m.pid === q.id && (m.k === k || m.k === "all"));
+  }
+
+  // Is pt on (or inside the bounding box of) the current selection?
+  function onSelection(pt, tol) {
+    if (!multi.length) return false;
+    const pts = [];
+    for (const m of multi) {
+      const q = byId(m.pid);
+      if (!q) continue;
+      if (m.k === "all") pts.push([q.x, q.y], [q.x + q.width, q.y + q.height]);
+      else pts.push(q.points[m.k]);
+    }
+    if (!pts.length) return false;
+    const xs = pts.map((v) => v[0]), ys = pts.map((v) => v[1]);
+    return pt[0] >= Math.min(...xs) - tol && pt[0] <= Math.max(...xs) + tol
+      && pt[1] >= Math.min(...ys) - tol && pt[1] <= Math.max(...ys) + tol;
+  }
+
+  function moveMulti(dx, dy) {
+    for (const m of multi) {
+      const q = byId(m.pid);
+      if (!q) continue;
+      if (m.k === "all") { q.x += dx; q.y += dy; continue; }
+      const last = q.points.length - 1, closed = isClosed(q.points);
+      q.points[m.k] = [q.points[m.k][0] + dx, q.points[m.k][1] + dy];
+      if (closed && m.k === 0) q.points[last] = [...q.points[0]];
+    }
+  }
+
+  function clearMulti() {
+    if (!multi.length) return;
+    multi = [];
+    draw();
+  }
+
+  const onSpace = (e) => {
+    if (e.key !== " " || ["INPUT", "SELECT", "TEXTAREA", "BUTTON"].includes(document.activeElement?.tagName)) return;
+    spaceDown = e.type === "keydown";
+    if (spaceDown) e.preventDefault();
+  };
+  document.addEventListener("keydown", onSpace);
+  document.addEventListener("keyup", onSpace);
+
   // --- canvas interaction: drag handles, tap to select, add points in add mode
   let drag = null;
   const tolerance = () => 14 / scale * (canvas.width / canvas.getBoundingClientRect().width);
@@ -925,6 +1074,17 @@ export function render(view, store, actions) {
     const pt = fromEvent(e);
     const tol = tolerance();
     const p = sel();
+    // pan: Shift / Space / middle mouse button (and plain touch on empty space, below)
+    if (e.shiftKey || spaceDown || e.button === 1) {
+      drag = { pan: true, last: [e.clientX, e.clientY] }; canvas.setPointerCapture(e.pointerId); e.preventDefault();
+      return;
+    }
+    // dragging the box selection moves every selected point
+    if (multi.length && !addMode && onSelection(pt, tol)) {
+      drag = { multi: true, last: pt }; canvas.setPointerCapture(e.pointerId);
+      return;
+    }
+    if (multi.length) clearMulti();
     if (p && addMode && p.shape === "line") {
       p.points.push(snapPoint(p, -1, pt, e));
       snapGuides = null;
@@ -947,7 +1107,12 @@ export function render(view, store, actions) {
     const { p: best, i: bestI } = hit;
     if (best && hoverLight) lightHit(hit);
     if (!best) {
-      if (zoom > 1) { drag = { pan: true, last: [e.clientX, e.clientY] }; canvas.setPointerCapture(e.pointerId); }
+      if (e.pointerType === "touch") {
+        if (zoom > 1) { drag = { pan: true, last: [e.clientX, e.clientY] }; canvas.setPointerCapture(e.pointerId); }
+      } else {
+        box = [pt[0], pt[1], pt[0], pt[1]];
+        drag = { box: true }; canvas.setPointerCapture(e.pointerId);
+      }
       return;
     }
     if (cursor !== null && best.id === selected && bestI >= 0) {
@@ -975,6 +1140,15 @@ export function render(view, store, actions) {
       return resize();
     }
     let pt = fromEvent(e);
+    if (drag.box) {
+      box[2] = pt[0]; box[3] = pt[1];
+      return draw();
+    }
+    if (drag.multi) {
+      moveMulti(pt[0] - drag.last[0], pt[1] - drag.last[1]);
+      drag.last = pt;
+      markDirty(); return draw();
+    }
     const { p, i } = drag;
     if (drag.bend !== undefined) {
       // bulge from how far the pointer is from the chord: s = sagitta, bulge = 2s / chord
@@ -1016,6 +1190,18 @@ export function render(view, store, actions) {
   canvas.addEventListener("pointerup", () => {
     const was = drag;
     drag = null; snapGuides = null;
+    if (was?.box) {
+      const small = Math.hypot(box[2] - box[0], box[3] - box[1]) < tolerance();
+      multi = small ? [] : selectBox(box);
+      box = null;
+      if (multi.length) {
+        const pids = [...new Set(multi.map((m) => m.pid))];
+        if (!pids.includes(selected)) { selected = pids[0]; cursor = null; guide = null; selPoint = null; stopHighlight(); }
+        toast(`${multi.length} point(s) selected in ${pids.length} shape(s) – drag them to move, Esc to deselect`);
+        drawForm(); drawTestPanel();
+      }
+      return draw();
+    }
     if (was && !was.pan) { record(); drawForm(); draw(); }
   });
   canvas.addEventListener("pointerleave", (e) => { if (hoverLight && e.pointerType === "mouse" && !drag) lightParts([]); });
@@ -1081,6 +1267,7 @@ export function render(view, store, actions) {
       num("Height (m)", layout.height, (v) => { layout.height = Math.max(1, v); resize(); }, { step: 0.5 }));
     if (!p) {
       fill(form, h("div", { class: "section-title" }, "Canvas"), canvasFields,
+        h("p", { class: "muted", style: { fontSize: "13px" } }, "Mouse: drag on an empty spot to box-select points (then drag them to move), Shift / Space + drag or the middle button pans, scroll zooms, Ctrl+Z undoes."),
         h("p", { class: "muted" }, "Add a shape (e.g. a rectangle for a TV backlight), import a device's outputs, or use camera mapping (the camera icon)."));
       return;
     }
@@ -1158,6 +1345,7 @@ export function render(view, store, actions) {
         markDirty(); draw(); drawForm(); drawTestPanel();
       } }, "Delete light string"),
       h("div", { class: "section-title" }, "Canvas"), canvasFields,
+        h("p", { class: "muted", style: { fontSize: "13px" } }, "Mouse: drag on an empty spot to box-select points (then drag them to move), Shift / Space + drag or the middle button pans, scroll zooms, Ctrl+Z undoes."),
     );
   }
 
@@ -1309,7 +1497,10 @@ export function render(view, store, actions) {
     wide.removeEventListener("change", resize);
     document.removeEventListener("keydown", onKey);
     document.removeEventListener("keydown", onUndoKey);
+    document.removeEventListener("keydown", onSpace);
+    document.removeEventListener("keyup", onSpace);
     clearInterval(test?.timer);
+    for (const id of testDevices) del(`devices/${id}/highlight`).catch(() => {});
     walk = null;
     stopHighlight();
   };
