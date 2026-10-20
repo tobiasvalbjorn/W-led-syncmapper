@@ -49,6 +49,7 @@ class Effect:
     key = ""
     name = ""
     description = ""
+    hidden = False  # not in the effect list (studio/scene are picked from "My effects")
     # Extra params beyond speed/intensity/colours, described for the UI:
     # {"angle": {"type": "range", "min": 0, "max": 360, "default": 0, "label": "Direction"}}
     params: Dict[str, dict] = {}
@@ -308,5 +309,37 @@ def create(key: str) -> Effect:
         raise KeyError(f"Unknown hub effect '{key}'") from None
 
 
+@register
+class StudioEffect(Effect):
+    """A custom effect built in the Effect Studio (see studio.py).
+
+    params: {"custom_id": "<saved effect>"} or, while designing,
+    {"custom_id": null, "layers": [...], "background": "#000000"}.
+    """
+
+    key = "studio"
+    name = "Custom effect"
+    hidden = True
+
+    def render(self, coords, t, opts):
+        from .studio import render_definition
+
+        params = opts.get("params") or {}
+        definition = (opts.get("custom") or {}).get(params.get("custom_id") or "") or params
+        return render_definition(definition, coords, t, opts["speed"] / 128.0, self.state.setdefault("layers", {}))
+
+
+@register
+class SceneEffect(Effect):
+    """A painted scene: per-LED colours, rendered by the hub per device (see Hub._render_frame)."""
+
+    key = "scene"
+    name = "Scene"
+    hidden = True
+
+    def render(self, coords, t, opts):  # the hub fills scenes itself, by device and LED index
+        return [(0, 0, 0)] * len(coords)
+
+
 def catalogue() -> List[dict]:
-    return [cls.describe() for cls in REGISTRY.values()]
+    return [cls.describe() for cls in REGISTRY.values() if not cls.hidden]

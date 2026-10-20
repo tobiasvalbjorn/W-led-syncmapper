@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.0
+
+- **Effect Studio** (new tab): build your own effects from stacked layers – lines, gradient, rings, wave, sparkle, solid colour – with colours, count, thickness, softness, direction, speed, bounce, opacity and blend. Preview live on a room's lights and save; saved effects appear in every room under "My effects" and in Home Assistant as "Custom: <name>".
+- **Paint**: paint colours onto the LEDs in the grid editor (brush, eraser, fill, clear), live on the lights, and save as a scene ("Scene: <name>" in Home Assistant). Scenes light only mapped LEDs.
+- **Several grids**: one grid per area (front of the house, the back, TV wall, kids' room …), each with its own canvas, background and mapping. Hub effects span each grid on its own. Your existing mapping becomes the first grid.
+- **Effect overlay** in the grid editor: a room's running hub effect drawn behind the lamps, so they can be placed and spaced to match how the effect moves.
+- **Live preview** ("now playing") at the top of every room/group sheet.
+
 ## 0.8.0
 
 - Hub effects span the mapped LEDs – from the outermost lit LED on one side of the house to the other – instead of the whole canvas, so an effect runs across every device. Rooms running the same effect stay in line with each other.

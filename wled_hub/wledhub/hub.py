@@ -36,6 +36,7 @@ from .ddp import DDPSender
 from .mapping import bounding_box, build_pixel_maps, fit_to_box, mapped_ranges
 from .models import Device, Group, HubConfig, LightState, Room, new_id, slugify
 from .scanner import ScanSession
+from .studio import clean_definition, clean_scene, decode_scene_pixels
 from .store import Store
 from .wled import WLEDClient, WLEDError, native_state, parse_info, realtime_state, segment_plan
 
@@ -80,6 +81,10 @@ class Hub:
         self.wled_palettes: List[str] = []
 
         self._pixel_maps: Dict[str, list] = {}
+        self._grid_of: Dict[str, list] = {}  # device id -> grid id per LED
+        self._grid_boxes: Dict[str, Any] = {}  # grid id -> bounding box of its mapped LEDs
+        self._clock_start = time.monotonic()  # effect time 0 (shared by the lights and the overlay)
+        self._field_effects: Dict[tuple, Any] = {}  # (target, effect key) -> instance for the overlay
         self._running: Dict[str, _Running] = {}  # target id -> hub effect
         self._sync_bits: Dict[str, int] = {}
         self._last_frames: Dict[str, List[Tuple[int, int, int]]] = {}
@@ -123,8 +128,11 @@ class Hub:
         data = self.config.to_dict(runtime=True)
         # The background image can be hundreds of kB: clients fetch it once
         # from api/layout/background and only see an id that changes with it.
-        bg = data["layout"].pop("background", None)
-        data["layout"]["background_id"] = f"{len(bg)}-{zlib.crc32(bg.encode()) & 0xffffffff:08x}" if bg else None
+        for grid in data["layouts"].values():
+            bg = grid.pop("background", None)
+            grid["background_id"] = f"{len(bg)}-{zlib.crc32(bg.encode()) & 0xffffffff:08x}" if bg else None
+        # scenes can be large: clients get names here and pixels from api/scenes/{id}
+        data["scenes"] = {k: {"name": v.get("name", k)} for k, v in data.get("scenes", {}).items()}
         data["targets"] = [
             {"id": t.id, "kind": t.kind, "name": t.name, "device_ids": [d.id for d in t.devices]}
             for t in self.targets()
@@ -238,7 +246,7 @@ class Hub:
         the hub changed before but that no longer needs it (mapping removed,
         setting off) gets one full-length segment back.
         """
-        mapped = mapped_ranges(device, self.config.layout)
+        mapped = mapped_ranges(device, self.config.layouts.values())
         if self.config.settings.segments_follow_mapping and mapped and not device.matrix and device.led_count:
             plan = segment_plan(mapped, device.led_count, device.max_segments)
             if plan is None:
@@ -287,14 +295,17 @@ class Hub:
 
     def rebuild_maps(self) -> None:
         devices = sorted(self.config.devices.values(), key=lambda d: d.name)
-        self._pixel_maps = build_pixel_maps(devices, self.config.layout)
-        # The area of every mapped LED: hub effects span this by default, so a
-        # sweep runs from one end of the house to the other.
-        self._house_box = bounding_box(c for pm in self._pixel_maps.values() for c in pm)
+        self._pixel_maps, self._grid_of = build_pixel_maps(devices, self.config.layouts.values())
+        # The area of every mapped LED, per grid: hub effects span this by
+        # default, so a sweep runs from one end of the house front to the other.
+        self._grid_boxes = {
+            gid: bounding_box(c for d in self._pixel_maps for c, g in zip(self._pixel_maps[d], self._grid_of[d]) if g == gid)
+            for gid in self.config.layouts
+        }
 
     async def _render_loop(self) -> None:
         next_preview = 0.0
-        start = time.monotonic()
+        start = self._clock_start
         while True:
             fps = self.config.settings.fps
             frame_start = time.monotonic()
@@ -316,28 +327,43 @@ class Hub:
             devices = [d for d in target.devices if d.id in running.devices and not self._overridden(d.id)]
             # Only LEDs that are drawn on the grid are rendered; the rest stay off.
             coords: list = []
+            gids: list = []
             spans = []
             for d in devices:
                 pmap = self._pixel_maps.get(d.id, [])
+                gmap = self._grid_of.get(d.id, [])
                 lit = [i for i, c in enumerate(pmap) if c is not None]
                 spans.append((d, len(coords), lit, len(pmap)))
                 coords.extend(pmap[i] for i in lit)
+                gids.extend(gmap[i] for i in lit)
             if not coords:
                 for d, _offset, _lit, n in spans:
                     frames[d.id] = [(0, 0, 0)] * n
                 continue
             state = target.state
+            if running.key == "scene":
+                scene = self.config.scenes.get(str(state.effect.params.get("scene_id") or ""), {})
+                k = state.brightness / 255.0
+                for d, _offset, lit, n in spans:
+                    painted = decode_scene_pixels(scene.get("pixels", {}).get(d.id, ""), n)
+                    frame = [(0, 0, 0)] * n
+                    for i in lit:  # strict: only mapped LEDs, even if more were painted
+                        r, g, b = painted[i]
+                        frame[i] = (int(r * k), int(g * k), int(b * k))
+                    frames[d.id] = frame
+                continue
             # "house" (default): effect positions relative to all mapped LEDs,
             # so rooms running the same effect line up across the house.
             # "room": the effect spans just this room/group's own LEDs.
             local = state.effect.params.get("span") == "room"
-            coords = fit_to_box(coords, bounding_box(coords) if local else self._house_box)
+            coords = self._fit_per_grid(coords, gids, local)
             opts = {
                 "speed": state.effect.speed,
                 "intensity": state.effect.intensity,
                 "color": state.color,
                 "color2": state.color2,
                 "params": state.effect.params,
+                "custom": self.config.custom_effects,
             }
             pixels = running.effect.render(coords, t, opts)
             k = state.brightness / 255.0
@@ -359,6 +385,53 @@ class Hub:
             if device is not None and device.enabled:
                 self.ddp.send(device.host, pixels, rgbw=device.rgbw)
         self._last_frames = frames
+
+    def _fit_per_grid(self, coords: list, gids: list, local: bool) -> list:
+        """Fit each grid's LEDs to that grid's lit area (or the room's part of it)."""
+        if len(set(gids)) <= 1:
+            gid = gids[0] if gids else None
+            return fit_to_box(coords, bounding_box(coords) if local else self._grid_boxes.get(gid))
+        out = list(coords)
+        for gid in set(gids):
+            idx = [i for i, g in enumerate(gids) if g == gid]
+            part = [coords[i] for i in idx]
+            fitted = fit_to_box(part, bounding_box(part) if local else self._grid_boxes.get(gid))
+            for i, c in zip(idx, fitted):
+                out[i] = c
+        return out
+
+    def effect_field(self, grid_id: str, target_id: str, cols: int, rows: int) -> bytes:
+        """The target's running hub effect, sampled on a cols x rows raster over
+        the whole grid canvas – fitted exactly like the real LEDs – so the grid
+        editor can show it behind the lamps while you place them."""
+        layout = self.config.layouts[grid_id]
+        target = self.target(target_id)
+        if target is None:
+            raise KeyError(target_id)
+        state = target.state
+        eff = state.effect
+        if eff.source != "hub" or str(eff.id) == "scene":
+            raise ValueError("Pick a room that runs an effect from “Across the grid” (or one of your own)")
+        key = str(eff.id)
+        inst = self._field_effects.get((target_id, key))
+        if inst is None:
+            inst = self._field_effects[(target_id, key)] = fx.create(key)
+        cols, rows = max(2, min(160, cols)), max(2, min(120, rows))
+        pts = [((c + 0.5) / cols, (r + 0.5) / rows) for r in range(rows) for c in range(cols)]
+        if eff.params.get("span") == "room":
+            mine = [c for d in target.devices
+                    for c, g in zip(self._pixel_maps.get(d.id, []), self._grid_of.get(d.id, []))
+                    if c is not None and g == grid_id]
+            box = bounding_box(mine)
+        else:
+            box = self._grid_boxes.get(grid_id)
+        if box is None:
+            raise ValueError(f"Nothing from this room is mapped on “{layout.name}” yet")
+        opts = {"speed": eff.speed, "intensity": eff.intensity, "color": state.color, "color2": state.color2,
+                "params": eff.params, "custom": self.config.custom_effects}
+        pixels = inst.render(fit_to_box(pts, box), time.monotonic() - self._clock_start, opts)
+        k = (state.brightness / 255.0) if state.on else 0.0
+        return bytes(int(v * k) for px in pixels for v in px)
 
     def _broadcast_preview(self) -> None:
         """Approximate live colours for the grid view (10 fps, base64 RGB)."""
@@ -422,9 +495,8 @@ class Hub:
 
     async def remove_device(self, device_id: str) -> None:
         self.config.devices.pop(device_id, None)
-        self.config.layout.placements = [
-            p for p in self.config.layout.placements if p.device_id != device_id
-        ]
+        for layout in self.config.layouts.values():
+            layout.placements = [p for p in layout.placements if p.device_id != device_id]
         self.rebuild_maps()
         await self.reapply_all()
         self.changed()
@@ -594,16 +666,62 @@ class Hub:
 
     # --------------------------------------------------------------- layout
 
-    async def set_layout(self, data: dict) -> None:
+    async def set_layout(self, grid_id: str, data: dict) -> None:
         from .models import Layout
 
-        background = self.config.layout.background
-        self.config.layout = Layout.from_dict(data)
+        old = self.config.layouts[grid_id]
+        layout = Layout.from_dict({**data, "id": grid_id, "name": data.get("name") or old.name})
         if "background" not in data:  # clients that never loaded the image keep it
-            self.config.layout.background = background
+            layout.background = old.background
+        self.config.layouts[grid_id] = layout
         self.rebuild_maps()
         self.changed()
         await self.reapply_all()  # WLED segments follow the new mapping
+
+    # --------------------------------------------------------------- grids
+
+    def add_layout(self, name: str) -> str:
+        from .models import Layout
+
+        grid_id = new_id("grid")
+        self.config.layouts[grid_id] = Layout(id=grid_id, name=name.strip()[:60] or "New grid")
+        self.rebuild_maps()
+        self.changed()
+        return grid_id
+
+    def rename_layout(self, grid_id: str, name: str) -> None:
+        self.config.layouts[grid_id].name = name.strip()[:60] or self.config.layouts[grid_id].name
+        self.changed()
+
+    async def delete_layout(self, grid_id: str) -> None:
+        if len(self.config.layouts) <= 1:
+            raise ValueError("The last grid cannot be deleted")
+        del self.config.layouts[grid_id]
+        self.rebuild_maps()
+        self.changed()
+        await self.reapply_all()
+
+    # ------------------------------------------------------------- library
+
+    def save_custom_effect(self, data: dict, effect_id: Optional[str] = None) -> str:
+        effect_id = effect_id if effect_id in self.config.custom_effects else new_id("fx")
+        self.config.custom_effects[effect_id] = clean_definition(data)
+        self.changed()
+        return effect_id
+
+    def delete_custom_effect(self, effect_id: str) -> None:
+        self.config.custom_effects.pop(effect_id, None)
+        self.changed()
+
+    def save_scene(self, data: dict, scene_id: Optional[str] = None) -> str:
+        scene_id = scene_id if scene_id in self.config.scenes else new_id("scene")
+        self.config.scenes[scene_id] = clean_scene(data)
+        self.changed()
+        return scene_id
+
+    def delete_scene(self, scene_id: str) -> None:
+        self.config.scenes.pop(scene_id, None)
+        self.changed()
 
     # -------------------------------------------------------------- scanner
 

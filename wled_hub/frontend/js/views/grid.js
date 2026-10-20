@@ -9,7 +9,7 @@
 // Segments between points can be straight or curved (a "bulge", drag the
 // small square in the middle of a segment). A circle is two points joined by
 // two half circles, so it has two segments like any other shape.
-import { del, get, post, put } from "../api.js";
+import { del, get, patch, post, put } from "../api.js";
 import {
   MAX_COLOURED_SEGMENTS, anchorsFromLengths, anchorsValid, cornerSegments, isClosed, ledCount,
   newPlacement, placementCoords, segPoint,
@@ -36,7 +36,10 @@ const TESTS = [
 ];
 
 export function render(view, store, actions) {
-  let layout = structuredClone(store.config.layout);
+  // Several grids (areas): front of house, TV wall, kids' room … one is edited at a time.
+  const savedGrid = (() => { try { return localStorage.getItem("wledhub-grid"); } catch { return null; } })();
+  let gridId = store.config.layouts[savedGrid] ? savedGrid : Object.keys(store.config.layouts)[0];
+  let layout = structuredClone(store.config.layouts[gridId]);
   let selected = layout.placements[0]?.id || null;
   let dirty = false;
   let addMode = false;
@@ -64,7 +67,7 @@ export function render(view, store, actions) {
   let undoStack = [], redoStack = [], committed = JSON.stringify(layout);
 
   actions.append(
-    h("button", { class: "icon-btn", title: "Camera mapping", onclick: () => openScanner(store) }, icon("camera")),
+    h("button", { class: "icon-btn", title: "Camera mapping", onclick: () => openScanner(store, gridId) }, icon("camera")),
   );
 
   const canvas = h("canvas", { class: "grid-canvas" });
@@ -72,6 +75,7 @@ export function render(view, store, actions) {
   const form = h("div");
   const testPanel = h("div");
   const saveBtn = h("button", { class: "btn", onclick: save }, "Save layout");
+  const gridBar = h("div", { class: "grid-toolbar", style: { alignItems: "center" } });
   const undoBtn = h("button", { class: "btn secondary small", title: "Undo (Ctrl+Z)", onclick: () => undo() }, "↶ Undo");
   const redoBtn = h("button", { class: "btn secondary small", title: "Redo (Ctrl+Y / Ctrl+Shift+Z)", onclick: () => redo() }, "↷ Redo");
   const bgRemoveBtn = h("button", { class: "btn secondary small", hidden: true, onclick: () => {
@@ -81,6 +85,10 @@ export function render(view, store, actions) {
   const modeBtnPart = h("button", { class: "active", onclick: () => setScope("part"), title: "Select, move and highlight one part" }, "Part");
   const modeBtnLamp = h("button", { onclick: () => setScope("lamp"), title: "Select, move and highlight every part of the lamp" }, "Whole lamp");
   const walkPanel = h("div");
+  const paintBtn = h("button", { class: "btn secondary small", title: "Paint colours onto the LEDs and save them as a scene",
+    onclick: () => (paint ? stopPaint() : startPaint()) }, "Paint");
+  const paintPanel = h("div");
+  const overlayBar = h("span", { class: "row", style: { gap: "6px" } });
   const peekBtn = h("button", { class: "btn secondary small", title: "Watch the running effect live on the mapped LEDs",
     onclick: () => setPeek(!peek) }, "Peek");
   const pixelBtn = h("button", { class: "btn secondary small", title: "Show only the mapped pixels, white on black",
@@ -93,6 +101,7 @@ export function render(view, store, actions) {
   view.replaceChildren(h("div", { class: "grid-layout" },
     h("div", { class: "grid-main" }, gridWrap),
     h("aside", { class: "grid-side" },
+      gridBar,
       h("div", { class: "grid-toolbar" },
         h("button", { class: "btn secondary small", onclick: templateSheet }, "+ Shape / template"),
         h("button", { class: "btn secondary small", onclick: walkSheet, title: "Build a shape LED by LED with the arrow keys" }, "+ Draw LED by LED"),
@@ -103,12 +112,13 @@ export function render(view, store, actions) {
         bgRemoveBtn,
         h("button", { class: "btn secondary small", onclick: () => fitSelected() }, "Zoom to selection"),
         h("button", { class: "btn secondary small", onclick: () => zoomTo(1) }, "Show all"),
-        pixelBtn, peekBtn,
+        pixelBtn, peekBtn, paintBtn, overlayBar,
         undoBtn, redoBtn,
         saveBtn),
       h("div", { class: "grid-toolbar" },
         h("div", { class: "segmented", style: { margin: 0 } }, modeBtnSide, modeBtnPart, modeBtnLamp),
         hoverBtn),
+      paintPanel,
       walkPanel,
       testPanel,
       form)));
@@ -122,6 +132,53 @@ export function render(view, store, actions) {
     dirty = true; saveBtn.textContent = "Save layout •";
     if (!drag && !walk) record(); // drags and LED-by-LED drawing are recorded once, when finished
   };
+
+  // --- grids ---------------------------------------------------------------
+  function drawGridBar() {
+    const grids = Object.values(store.config.layouts);
+    const pick = h("select", { title: "Which area you are mapping" },
+      grids.map((g) => h("option", { value: g.id, selected: g.id === gridId }, g.name)));
+    pick.addEventListener("change", () => switchGrid(pick.value));
+    fill(gridBar,
+      h("strong", {}, "Grid"), pick,
+      h("button", { class: "btn secondary small", title: "A new grid for another area, e.g. the back of the house or the TV wall", onclick: async () => {
+        const name = prompt("Name of the new grid (e.g. Back of house, TV wall, Kids' room):");
+        if (!name || !name.trim()) return;
+        try {
+          const res = await post("layouts", { name: name.trim() });
+          if (!dirty || confirm("Leave the current grid without saving?")) { dirty = false; switchGrid(res.id, true); }
+        } catch (e) { toast(e.message); }
+      } }, "+ Grid"),
+      h("button", { class: "btn secondary small", onclick: async () => {
+        const name = prompt("New name for this grid:", layout.name);
+        if (!name || !name.trim()) return;
+        layout.name = name.trim();
+        try { await patch(`layouts/${gridId}`, { name: layout.name }); } catch (e) { toast(e.message); }
+      } }, "Rename"),
+      grids.length > 1 ? h("button", { class: "btn secondary small", onclick: async () => {
+        if (!confirm(`Delete the grid “${layout.name}” and everything mapped on it? The devices are kept.`)) return;
+        try { await del(`layouts/${gridId}`); dirty = false; } catch (e) { toast(e.message); }
+      } }, "Delete") : null);
+  }
+
+  function switchGrid(id, force = false) {
+    if (!store.config.layouts[id] || (id === gridId && !force)) return;
+    if (dirty && !force && !confirm(`Discard the unsaved changes to “${layout.name}”?`)) return drawGridBar();
+    stopTest(); if (walk) finishWalk(); if (cursor !== null) cursorOff(); stopHighlight();
+    const wasPainting = !!paint;
+    stopPaint();
+    gridId = id;
+    try { localStorage.setItem("wledhub-grid", id); } catch { /* storage blocked */ }
+    layout = structuredClone(store.config.layouts[id]);
+    selected = layout.placements[0]?.id || null;
+    dirty = false; saveBtn.textContent = "Save layout";
+    multi = []; selPoint = null; hoverIds = new Set(); hoverSeg = null;
+    committed = JSON.stringify(layout); undoStack = []; redoStack = []; updateUndoButtons();
+    bgLoadedId = null; bgImage = null;
+    zoom = 1; center = null;
+    drawGridBar(); loadBackground(); resize(); drawForm(); drawTestPanel();
+    if (wasPainting) startPaint();
+  }
 
   // --- undo / redo ---------------------------------------------------------
   function record() {
@@ -288,6 +345,7 @@ export function render(view, store, actions) {
   function draw() {
     const dpr = window.devicePixelRatio || 1;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (paint) return drawPaint();
     if (peek) return drawPeek();
     if (pixelView) return drawPixels();
     ctx.fillStyle = "#0b0b0d";
@@ -297,6 +355,7 @@ export function render(view, store, actions) {
       ctx.drawImage(bgImage, ox, oy, layout.width * scale, layout.height * scale);
       ctx.globalAlpha = 1;
     }
+    drawOverlay();
     // 1-unit grid
     ctx.strokeStyle = "rgba(255,255,255,.06)";
     ctx.lineWidth = 1;
@@ -423,6 +482,249 @@ export function render(view, store, actions) {
     }
   }
 
+  // --- Effect overlay -----------------------------------------------------
+  // A room's running hub effect drawn across the whole canvas behind the
+  // lamps (the hub samples it like the real LEDs), so lamps can be placed and
+  // spaced to match how the effect really moves.
+  const overlay = { target: null, img: null, running: false, error: null };
+  const overlayCanvas = document.createElement("canvas");
+
+  function drawOverlayBar() {
+    const hubTargets = store.config.targets.filter((t) => {
+      const st = t.kind === "group" ? store.config.groups[t.id]?.state : store.config.rooms[t.id]?.state;
+      return st?.effect?.source === "hub" && st.effect.id !== "scene";
+    });
+    const sel = h("select", { title: "Show a room's running effect behind the lamps" },
+      h("option", { value: "" }, "Effect overlay: off"),
+      hubTargets.map((t) => h("option", { value: t.id, selected: t.id === overlay.target }, `Overlay: ${t.name}`)));
+    sel.addEventListener("change", () => setOverlay(sel.value || null));
+    fill(overlayBar, sel);
+  }
+
+  function setOverlay(targetId) {
+    overlay.target = targetId; overlay.img = null; overlay.error = null;
+    if (targetId && !overlay.running) pollOverlay();
+    draw();
+  }
+
+  async function pollOverlay() {
+    overlay.running = true;
+    while (overlay.target && !closed) {
+      const cols = 96, rows = Math.max(8, Math.min(96, Math.round((96 * layout.height) / layout.width)));
+      try {
+        const r = await get(`layouts/${gridId}/field?target=${encodeURIComponent(overlay.target)}&cols=${cols}&rows=${rows}`);
+        const raw = atob(r.data);
+        overlayCanvas.width = r.cols; overlayCanvas.height = r.rows;
+        const octx = overlayCanvas.getContext("2d");
+        const img = octx.createImageData(r.cols, r.rows);
+        for (let i = 0, j = 0; i < raw.length; i += 3, j += 4) {
+          img.data[j] = raw.charCodeAt(i); img.data[j + 1] = raw.charCodeAt(i + 1); img.data[j + 2] = raw.charCodeAt(i + 2); img.data[j + 3] = 255;
+        }
+        octx.putImageData(img, 0, 0);
+        overlay.img = overlayCanvas; overlay.error = null;
+        if (!drag) draw();
+      } catch (e) {
+        if (overlay.error !== e.message) { overlay.error = e.message; toast(e.message); }
+        await new Promise((res) => setTimeout(res, 1500));
+      }
+      await new Promise((res) => setTimeout(res, 100)); // one request at a time, ~8 updates/s
+    }
+    overlay.running = false;
+  }
+
+  function drawOverlay() {
+    if (!overlay.target || !overlay.img) return;
+    ctx.save();
+    ctx.globalAlpha = 0.6;
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(overlay.img, ox, oy, layout.width * scale, layout.height * scale);
+    ctx.restore();
+  }
+
+  // --- Paint --------------------------------------------------------------
+  // Brush colours onto the LEDs of this grid, see them live on the real
+  // lights, and save the picture as a scene (one colour per LED, per device).
+  // Scenes can be switched on in any room under "My effects".
+  let paint = null;
+  let closed = false; // the view was left (stops the overlay polling)
+
+  function startPaint() {
+    if (walk) finishWalk(); if (cursor !== null) cursorOff(); stopTest();
+    if (hoverLight) setHoverLight(false);
+    const data = {};
+    for (const d of Object.values(devices())) data[d.id] = new Array(d.led_count).fill(null);
+    paint = { color: "#ff3020", size: 14, erase: false, live: true, data, dirtyDevices: new Set(), timer: null,
+      sceneId: null, name: "My scene", down: false, brushAt: null, coords: paintCoords() };
+    // the hub drops a highlight after 90 s without news: keep the painting lit
+    paint.keep = setInterval(() => paint?.live && sendAllPaint(), 30000);
+    paintBtn.classList.remove("secondary"); paintBtn.textContent = "Paint: on";
+    drawPaintPanel(); draw();
+  }
+
+  function stopPaint() {
+    if (!paint) return;
+    clearTimeout(paint.timer); clearInterval(paint.keep);
+    for (const id of Object.keys(paint.data)) {
+      hlQueue = hlQueue.filter((j) => j.stop || j.deviceId !== id);
+      hlQueue.push({ stop: id });
+    }
+    pumpHighlight();
+    paint = null;
+    paintBtn.classList.add("secondary"); paintBtn.textContent = "Paint";
+    fill(paintPanel); draw();
+  }
+
+  // LED positions of this grid: [{ deviceId, idx, x, y }]
+  function paintCoords() {
+    const out = [];
+    for (const p of layout.placements) {
+      const d = devices()[p.device_id];
+      if (!d) continue;
+      const n = countOf(p);
+      placementCoords(p, d.led_count).forEach((c, i) => {
+        out.push({ deviceId: p.device_id, idx: (p.start || 0) + (p.reverse ? n - 1 - i : i), x: c[0], y: c[1] });
+      });
+    }
+    return out;
+  }
+
+  function paintAt(pt) {
+    const radius = (paint.size * (canvas.width / canvas.getBoundingClientRect().width)) / scale;
+    const value = paint.erase ? null : paint.color;
+    for (const c of paint.coords) {
+      if (Math.hypot(c.x - pt[0], c.y - pt[1]) <= radius) {
+        const arr = paint.data[c.deviceId];
+        if (arr && arr[c.idx] !== value) { arr[c.idx] = value; paint.dirtyDevices.add(c.deviceId); }
+      }
+    }
+    draw();
+    flushPaintSoon();
+  }
+
+  // Show the painting on the real lights: painted runs as coloured ranges.
+  function flushPaintSoon() {
+    if (!paint?.live || paint.timer) return;
+    paint.timer = setTimeout(() => {
+      paint.timer = null;
+      for (const id of paint.dirtyDevices) sendPaint(id);
+      paint.dirtyDevices.clear();
+    }, 80);
+  }
+
+  function sendPaint(deviceId) {
+    const arr = paint.data[deviceId] || [];
+    const ranges = [];
+    for (let i = 0; i < arr.length; i++) {
+      if (!arr[i]) continue;
+      const last = ranges[ranges.length - 1];
+      if (last && last[0] + last[1] === i && last[2] === arr[i]) last[1]++;
+      else ranges.push([i, 1, arr[i]]);
+    }
+    if (!ranges.length) {
+      hlQueue = hlQueue.filter((j) => j.stop || j.deviceId !== deviceId);
+      hlQueue.push({ stop: deviceId }); pumpHighlight();
+      return;
+    }
+    sendHighlight(deviceId, { ranges: ranges.map(([a, c, hex]) => [a, c, hexRgb(hex)]), effect: "solid" });
+  }
+
+  const hexRgb = (hex) => [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
+
+  function sendAllPaint() { for (const id of Object.keys(paint.data)) sendPaint(id); }
+
+  function drawPaint() {
+    const dpr = window.devicePixelRatio || 1;
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    const r = Math.max(1.5, Math.min(7, scale * 0.06));
+    for (const c of paint.coords) {
+      const v = paint.data[c.deviceId]?.[c.idx];
+      const [x, y] = toPx([c.x, c.y]);
+      ctx.fillStyle = v || "rgba(255,255,255,.18)";
+      ctx.beginPath(); ctx.arc(x, y, v ? r * 1.2 : r * 0.8, 0, 2 * Math.PI); ctx.fill();
+    }
+    if (paint.brushAt) {
+      const [x, y] = toPx(paint.brushAt);
+      ctx.strokeStyle = paint.erase ? "#fff" : paint.color; ctx.lineWidth = 1.5 * dpr;
+      ctx.beginPath(); ctx.arc(x, y, paint.size * dpr, 0, 2 * Math.PI); ctx.stroke();
+    }
+  }
+
+  function drawPaintPanel() {
+    if (!paint) return fill(paintPanel);
+    const colour = h("input", { type: "color", value: paint.color });
+    colour.addEventListener("input", () => { paint.color = colour.value; paint.erase = false; drawPaintPanel(); });
+    const size = h("input", { type: "range", min: 2, max: 80, value: paint.size });
+    size.addEventListener("input", () => { paint.size = Number(size.value); draw(); });
+    const name = h("input", { type: "text", value: paint.name, placeholder: "Scene name" });
+    name.addEventListener("change", () => (paint.name = name.value.trim() || "My scene"));
+    const swatches = ["#ff3020", "#ff9a00", "#ffe000", "#30e050", "#00d0ff", "#2060ff", "#a040ff", "#ff40c0", "#ffffff", "#ffb070"];
+    const scenes = Object.entries(store.config.scenes || {});
+    const b = (label, fn, title, active) => h("button", { class: `btn small ${active ? "" : "secondary"}`, title, onclick: fn }, label);
+    fill(paintPanel,
+      h("div", { class: "section-title" }, "Paint"),
+      h("div", { class: "list", style: { padding: "10px 12px" } },
+        h("div", { class: "row", style: { gap: "6px", flexWrap: "wrap" } }, colour,
+          swatches.map((c) => h("button", { class: `swatch${c === paint.color && !paint.erase ? " active" : ""}`, style: { background: c, width: "26px", height: "26px" },
+            onclick: () => { paint.color = c; paint.erase = false; colour.value = c; drawPaintPanel(); } }))),
+        h("div", { class: "field" }, h("label", {}, "Brush size"), size),
+        h("div", { class: "row", style: { gap: "6px", flexWrap: "wrap" } },
+          b("Eraser", () => { paint.erase = !paint.erase; drawPaintPanel(); draw(); }, "Erase painted LEDs", paint.erase),
+          b("Fill grid", () => { for (const c of paint.coords) paint.data[c.deviceId][c.idx] = paint.color; draw(); if (paint.live) sendAllPaint(); }, "Every LED on this grid in the brush colour"),
+          b("Clear", () => { for (const arr of Object.values(paint.data)) arr.fill(null); draw(); if (paint.live) sendAllPaint(); }, "Remove all paint"),
+          b(paint.live ? "Live on lights: on" : "Live on lights: off", () => {
+            paint.live = !paint.live;
+            if (paint.live) sendAllPaint(); else for (const id of Object.keys(paint.data)) { hlQueue.push({ stop: id }); pumpHighlight(); }
+            drawPaintPanel();
+          }, "Show the painting on the real lights while you paint", paint.live)),
+        h("p", { class: "muted", style: { fontSize: "13px", margin: "8px 0" } }, "Drag over the LEDs to paint. Shift / Space + drag pans, scroll zooms. Only mapped LEDs can be painted."),
+        h("div", { class: "row", style: { gap: "6px", flexWrap: "wrap" } }, name,
+          h("button", { class: "btn small", onclick: () => saveScene(false) }, paint.sceneId ? "Save scene" : "Save as scene"),
+          paint.sceneId ? h("button", { class: "btn small secondary", onclick: () => saveScene(true) }, "Save as new") : null,
+          h("button", { class: "btn small secondary", onclick: stopPaint }, "Done")),
+        scenes.length ? h("div", {},
+          h("div", { class: "section-title" }, "Saved scenes"),
+          h("div", { class: "list" }, scenes.map(([id, sc]) => h("div", { class: "list-item" },
+            h("div", { class: "grow" }, sc.name),
+            h("button", { class: "btn small secondary", onclick: () => loadScene(id) }, "Load"),
+            h("button", { class: "btn small danger", onclick: async () => {
+              if (!confirm(`Delete the scene ${sc.name}?`)) return;
+              await del(`scenes/${id}`).catch((e) => toast(e.message));
+              if (paint?.sceneId === id) paint.sceneId = null;
+              drawPaintPanel();
+            } }, "Delete"))))) : null));
+  }
+
+  async function saveScene(asNew) {
+    const pixels = {};
+    for (const [id, arr] of Object.entries(paint.data)) {
+      if (!arr.some(Boolean)) continue;
+      pixels[id] = arr.map((v) => (v ? v.slice(1).toLowerCase() : "000000")).join("");
+    }
+    try {
+      const res = await post("scenes", { id: asNew ? undefined : paint.sceneId || undefined, name: paint.name, pixels });
+      paint.sceneId = res.id;
+      toast(`Scene “${paint.name}” saved – switch it on in a room under My effects`);
+      drawPaintPanel();
+    } catch (e) { toast(e.message); }
+  }
+
+  async function loadScene(id) {
+    try {
+      const sc = await get(`scenes/${id}`);
+      for (const [dev, arr] of Object.entries(paint.data)) {
+        const hex = sc.pixels?.[dev] || "";
+        for (let i = 0; i < arr.length; i++) {
+          const v = hex.slice(i * 6, i * 6 + 6);
+          arr[i] = v.length === 6 && v !== "000000" ? `#${v}` : null;
+        }
+      }
+      paint.sceneId = id; paint.name = sc.name;
+      drawPaintPanel(); draw();
+      if (paint.live) sendAllPaint();
+    } catch (e) { toast(e.message); }
+  }
+
   // Peek: what the real lights show right now (hub preview, ~20 fps), only
   // for LEDs on the grid, big and glowing on black – check that an effect
   // really moves the way the house is laid out.
@@ -495,7 +797,7 @@ export function render(view, store, actions) {
     req.catch((e) => { if (!job.stop) toast(e.message); }).finally(() => { hlBusy = false; pumpHighlight(); });
   }
   function sendHighlight(deviceId, payload) {
-    hlQueue = hlQueue.filter((j) => j.stop); // newer position replaces any waiting one
+    hlQueue = hlQueue.filter((j) => j.stop || j.deviceId !== deviceId); // newer state for this device replaces the waiting one
     hlQueue.push({ deviceId, payload });
     pumpHighlight();
   }
@@ -1211,6 +1513,11 @@ export function render(view, store, actions) {
     const pt = fromEvent(e);
     const tol = tolerance();
     const p = sel();
+    if (paint && !(e.shiftKey || spaceDown || e.button === 1)) {
+      paint.down = true; canvas.setPointerCapture(e.pointerId);
+      paintAt(pt);
+      return;
+    }
     // pan: Shift / Space / middle mouse button (and plain touch on empty space, below)
     if (e.shiftKey || spaceDown || e.button === 1) {
       drag = { pan: true, last: [e.clientX, e.clientY] }; canvas.setPointerCapture(e.pointerId); e.preventDefault();
@@ -1263,6 +1570,11 @@ export function render(view, store, actions) {
     draw(); drawForm(); drawTestPanel();
   });
   canvas.addEventListener("pointermove", (e) => {
+    if (paint) {
+      paint.brushAt = fromEvent(e);
+      if (paint.down) paintAt(paint.brushAt); else draw();
+      if (!drag) return;
+    }
     if (!drag) {
       if (hoverLight && e.pointerType === "mouse") {
         lightHit(hitTest(fromEvent(e), tolerance()));
@@ -1325,6 +1637,7 @@ export function render(view, store, actions) {
     markDirty(); draw();
   });
   canvas.addEventListener("pointerup", () => {
+    if (paint?.down) { paint.down = false; return; }
     const was = drag;
     drag = null; snapGuides = null;
     if (was?.box) {
@@ -1608,12 +1921,12 @@ export function render(view, store, actions) {
     if (!layout.background_id) { bgImage = null; bgLoadedId = null; return draw(); }
     if (layout.background_id === bgLoadedId && bgImage) return draw();
     bgLoadedId = layout.background_id;
-    get("layout/background").then((r) => r.background && show(r.background)).catch(() => {});
+    get(`layouts/${gridId}/background`).then((r) => r.background && show(r.background)).catch(() => {});
   }
 
   async function save() {
     try {
-      await put("layout", layout);
+      await put(`layouts/${gridId}`, layout);
       dirty = false; saveBtn.textContent = "Save layout";
       toast("Layout saved – hub effects use it now");
     } catch (e) { toast(e.message); }
@@ -1622,8 +1935,10 @@ export function render(view, store, actions) {
   const unsubs = [
     store.onPreview(() => { if (!drag) draw(); }),
     store.subscribe((config) => {
+      drawGridBar(); drawOverlayBar();
+      if (!config.layouts[gridId]) { dirty = false; return switchGrid(Object.keys(config.layouts)[0], true); }
       if (!dirty) {
-        layout = structuredClone(config.layout);
+        layout = structuredClone(config.layouts[gridId]);
         committed = JSON.stringify(layout); undoStack = []; redoStack = []; updateUndoButtons();
         if (!sel()) selected = layout.placements[0]?.id || null;
         loadBackground(); drawForm(); drawTestPanel();
@@ -1633,6 +1948,8 @@ export function render(view, store, actions) {
   const ro = new ResizeObserver(resize);
   ro.observe(gridWrap);
   wide.addEventListener("change", resize);
+  drawGridBar();
+  drawOverlayBar();
   loadBackground();
   drawForm();
   drawTestPanel();
@@ -1648,6 +1965,8 @@ export function render(view, store, actions) {
     clearInterval(test?.timer);
     for (const id of testDevices) del(`devices/${id}/highlight`).catch(() => {});
     walk = null;
+    closed = true;
+    stopPaint();
     stopHighlight();
   };
 }

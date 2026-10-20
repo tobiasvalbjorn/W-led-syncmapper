@@ -7,7 +7,7 @@ Everything the hub persists lives in one JSON document (see store.py):
       "devices":    { "<device_id>": Device },
       "rooms":      { "<room_id>":   Room },
       "groups":     { "<group_id>":  Group },
-      "layout":     Layout,
+      "layouts":    { "<grid_id>": Layout },   # one grid per area, e.g. front of house, TV wall
       "settings":   Settings
     }
 
@@ -235,6 +235,12 @@ class Placement:
 
 @dataclass
 class Layout:
+    """One grid: an area with its own canvas and coordinates (front of the
+    house, the back, the TV wall, a kids' room …). Hub effects span each
+    grid on its own."""
+
+    id: str = "main"
+    name: str = "Main grid"
     width: float = 20.0  # canvas size in arbitrary units (metres work well)
     height: float = 12.0
     background: Optional[str] = None  # optional floor plan image (data URL)
@@ -244,6 +250,8 @@ class Layout:
     def from_dict(cls, data: Optional[dict]) -> "Layout":
         data = data or {}
         return cls(
+            id=str(data.get("id") or "main"),
+            name=str(data.get("name") or "Main grid"),
             width=float(data.get("width", 20.0)),
             height=float(data.get("height", 12.0)),
             background=data.get("background"),
@@ -273,13 +281,24 @@ class Settings:
         )
 
 
+def _layouts_from(data: dict) -> Dict[str, Layout]:
+    """Grids from config data; a single old-style "layout" becomes the first grid."""
+    raw = data.get("layouts")
+    if isinstance(raw, dict) and raw:
+        return {str(k): Layout.from_dict({**v, "id": str(k)}) for k, v in raw.items()}
+    return {"main": Layout.from_dict({**(data.get("layout") or {}), "id": "main", "name": "Main grid"})}
+
+
 @dataclass
 class HubConfig:
     devices: Dict[str, Device] = field(default_factory=dict)
     rooms: Dict[str, Room] = field(default_factory=dict)
     groups: Dict[str, Group] = field(default_factory=dict)
-    layout: Layout = field(default_factory=Layout)
+    layouts: Dict[str, Layout] = field(default_factory=lambda: {"main": Layout()})
     settings: Settings = field(default_factory=Settings)
+    # Effect Studio: id -> definition (see studio.py); painted scenes: id -> {name, pixels}
+    custom_effects: Dict[str, dict] = field(default_factory=dict)
+    scenes: Dict[str, dict] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: Optional[dict]) -> "HubConfig":
@@ -288,8 +307,10 @@ class HubConfig:
             devices={k: Device.from_dict(v) for k, v in data.get("devices", {}).items()},
             rooms={k: Room.from_dict(v) for k, v in data.get("rooms", {}).items()},
             groups={k: Group.from_dict(v) for k, v in data.get("groups", {}).items()},
-            layout=Layout.from_dict(data.get("layout")),
+            layouts=_layouts_from(data),
             settings=Settings.from_dict(data.get("settings")),
+            custom_effects=dict(data.get("custom_effects") or {}),
+            scenes=dict(data.get("scenes") or {}),
         )
 
     def to_dict(self, runtime: bool = False) -> dict:
@@ -298,11 +319,16 @@ class HubConfig:
             "devices": {k: d.to_dict(runtime) for k, d in self.devices.items()},
             "rooms": {k: asdict(r) for k, r in self.rooms.items()},
             "groups": {k: asdict(g) for k, g in self.groups.items()},
-            "layout": asdict(self.layout),
+            "layouts": {k: asdict(v) for k, v in self.layouts.items()},
             "settings": asdict(self.settings),
+            "custom_effects": self.custom_effects,
+            "scenes": self.scenes,
         }
 
     # ------------------------------------------------------------ helpers
+
+    def placements(self) -> List["Placement"]:
+        return [p for layout in self.layouts.values() for p in layout.placements]
 
     def devices_in_room(self, room_id: str) -> List[Device]:
         return [d for d in self.devices.values() if d.room_id == room_id and d.enabled]

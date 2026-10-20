@@ -2,14 +2,17 @@
 import { del, patch, post, put, throttled } from "../api.js";
 import { colorWheel } from "../colorwheel.js";
 import { h, icon, rgbCss, sheet, slider, toast, toggle, ROOM_ICONS } from "../ui.js";
+import { livePreview } from "../livepreview.js";
 
 const PRESETS = [
   [255, 147, 41], [255, 197, 143], [255, 255, 255], [255, 0, 0], [255, 80, 0],
   [255, 200, 0], [0, 255, 60], [0, 200, 255], [0, 60, 255], [140, 0, 255], [255, 0, 140],
 ];
 
-export function effectLabel(state, effects) {
+export function effectLabel(state, effects, config) {
   const e = state.effect;
+  if (e.source === "hub" && e.id === "studio") return config?.custom_effects?.[e.params?.custom_id]?.name || "Custom effect (draft)";
+  if (e.source === "hub" && e.id === "scene") return config?.scenes?.[e.params?.scene_id]?.name || "Scene";
   if (e.source === "hub") return effects.hub.find((x) => x.key === e.id)?.name || e.id;
   if (Number(e.id) === 0) return "Solid colour";
   return effects.wled.find((x) => x.id === Number(e.id))?.name || `Effect ${e.id}`;
@@ -29,7 +32,7 @@ export function openTargetSheet(store, targetId) {
   let state = stateOf(store.config, target);
   let tab = "color";
   let colorSlot = "color";
-  let effectSource = state.effect.source;
+  let effectSource = state.effect.source === "hub" && ["studio", "scene"].includes(state.effect.id) ? "mine" : state.effect.source;
   let filter = "";
 
   const send = throttled((changes) =>
@@ -41,7 +44,9 @@ export function openTargetSheet(store, targetId) {
   const change = (changes) => { store.interacting = 1; setLocal(changes); send(changes); };
 
   const body = h("div");
-  const s = sheet(body, { onClose: () => unsubscribe() });
+  // "Now playing": the room's/group's lights with their current colours
+  const preview = livePreview(store, target.device_ids);
+  const s = sheet(body, { onClose: () => { unsubscribe(); preview.destroy(); } });
 
   const draw = () => {
     const header = h("div", { class: "row", style: { marginBottom: "6px" } },
@@ -58,7 +63,7 @@ export function openTargetSheet(store, targetId) {
         h("button", { class: tab === key ? "active" : "", onclick: () => { tab = key; draw(); } }, label)));
 
     const content = { color: colorTab, effects: effectsTab, group: groupTab, edit: editTab }[tab]();
-    body.replaceChildren(header, bri, tabs, content);
+    body.replaceChildren(header, preview.el, bri, tabs, content);
   };
 
   function colorTab() {
@@ -90,10 +95,21 @@ export function openTargetSheet(store, targetId) {
     const effects = store.effects;
     const srcTabs = h("div", { class: "segmented" },
       h("button", { class: effectSource === "hub" ? "active" : "", onclick: () => { effectSource = "hub"; draw(); } }, "Across the grid (hub)"),
-      h("button", { class: effectSource === "wled" ? "active" : "", onclick: () => { effectSource = "wled"; draw(); } }, "Per device (WLED built-in)"));
+      h("button", { class: effectSource === "wled" ? "active" : "", onclick: () => { effectSource = "wled"; draw(); } }, "Per device (WLED built-in)"),
+      h("button", { class: effectSource === "mine" ? "active" : "", onclick: () => { effectSource = "mine"; draw(); } }, "My effects"));
 
+    // "My effects": effects built in the Studio and scenes painted on the grid
+    const cfg = store.config;
+    const mine = [
+      ...Object.entries(cfg.custom_effects || {}).map(([id, e]) => ({ id: `studio:${id}`, name: e.name, desc: `Custom · ${(e.layers || []).length} layer(s)`,
+        ref: { source: "hub", id: "studio", params: { custom_id: id } } })),
+      ...Object.entries(cfg.scenes || {}).map(([id, e]) => ({ id: `scene:${id}`, name: e.name, desc: "Painted scene",
+        ref: { source: "hub", id: "scene", params: { scene_id: id } } })),
+    ];
+    const activeMine = state.effect.id === "studio" ? `studio:${state.effect.params?.custom_id}` : state.effect.id === "scene" ? `scene:${state.effect.params?.scene_id}` : null;
     const list = effectSource === "hub"
       ? effects.hub.map((e) => ({ id: e.key, name: e.name, desc: e.description }))
+      : effectSource === "mine" ? mine
       : effects.wled.map((e) => ({ id: e.id, name: e.name, desc: "" }));
     const search = h("input", { class: "search", type: "search", placeholder: "Search effects…", value: filter });
     const grid = h("div", { class: "effects" });
@@ -101,8 +117,8 @@ export function openTargetSheet(store, targetId) {
       grid.replaceChildren(...list
         .filter((e) => e.name.toLowerCase().includes(filter.toLowerCase()))
         .map((e) => h("button", {
-          class: `effect${state.effect.source === effectSource && String(state.effect.id) === String(e.id) ? " active" : ""}`,
-          onclick: () => { change({ on: true, effect: { source: effectSource, id: e.id } }); draw(); },
+          class: `effect${(effectSource === "mine" ? activeMine === e.id : state.effect.source === effectSource && String(state.effect.id) === String(e.id)) ? " active" : ""}`,
+          onclick: () => { change({ on: true, effect: e.ref || { source: effectSource, id: e.id } }); draw(); },
         }, e.name, e.desc ? h("small", {}, e.desc) : null)));
     };
     search.addEventListener("input", () => { filter = search.value; fill(); });
@@ -135,7 +151,9 @@ export function openTargetSheet(store, targetId) {
       sel.addEventListener("change", () => change({ effect: { palette: Number(sel.value) } }));
       controls.append(h("div", { class: "field" }, h("label", {}, "Palette"), sel));
     }
-    const note = effectSource === "hub"
+    const note = effectSource === "mine"
+      ? (mine.length ? "Effects you built in the Studio and scenes you painted on the grid." : "Nothing here yet – build an effect in the Studio tab, or paint a scene in the Grid tab.")
+      : effectSource === "hub"
       ? "Rendered by the hub on your grid and sent to every mapped LED at once, so an effect runs across all devices – a line sweeps from one end of the house to the other."
       : "WLED's own effects run on each device by itself (each light string on its own), kept in time with WLED sync. They do not follow the grid – use an effect from \"Across the grid\" for that.";
     return h("div", {}, srcTabs, h("p", { class: "muted" }, note), search, grid, controls);
@@ -221,6 +239,7 @@ export function openTargetSheet(store, targetId) {
     const t = findTarget(config, targetId);
     if (!t) return s.close(); // room got grouped / deleted
     target = t;
+    preview.setDevices(target.device_ids);
     if (!store.interacting && tab !== "group" && tab !== "edit") {
       state = stateOf(config, target);
       draw();

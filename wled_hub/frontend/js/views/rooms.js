@@ -29,7 +29,7 @@ function subtitle(config, target, state, effects) {
   }
   if (!target.device_ids.length) parts.push("No devices");
   else if (!state.on) parts.push("Off");
-  else parts.push(effectLabel(state, effects));
+  else parts.push(effectLabel(state, effects, config));
   return parts.join(" · ");
 }
 

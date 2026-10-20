@@ -259,3 +259,79 @@ def test_line_sweep_moves_across():
         px = effect.render(coords, t, opts)
         lit_at.append(max(range(20), key=lambda i: px[i][0]))
     assert lit_at[0] < lit_at[1] < lit_at[2]  # the line moves left -> right
+
+
+def test_studio_layers_render_and_blend():
+    from wledhub.studio import render_definition
+
+    coords = [(i / 19, 0.5) for i in range(20)]
+    lines = {"background": "#000000", "layers": [
+        {"type": "lines", "colors": ["#ff0000"], "count": 1, "width": 0.1, "softness": 0, "speed": 0}]}
+    px = render_definition(lines, coords, 0.0, 1.0, {})
+    lit = [i for i, p in enumerate(px) if p[0] > 0]
+    assert lit and all(px[i] == (255, 0, 0) for i in lit) and len(lit) < 20  # one red line, rest background
+    over = {"background": "#0000ff", "layers": [{"type": "solid", "color": "#ff0000", "opacity": 0.5}]}
+    assert render_definition(over, coords[:1], 0, 1, {})[0] == (127, 0, 127)
+    add = {"background": "#0000ff", "layers": [{"type": "solid", "color": "#ff0000", "blend": "add"}]}
+    assert render_definition(add, coords[:1], 0, 1, {})[0] == (255, 0, 255)
+    for kind in ("gradient", "rings", "wave", "sparkle"):
+        out = render_definition({"layers": [{"type": kind, "colors": ["#ff0000", "#00ff00"]}]}, coords, 1.0, 1.0, {})
+        assert len(out) == 20 and all(0 <= v <= 255 for p in out for v in p), kind
+
+
+def test_scene_is_rendered_per_led_and_strictly_mapped():
+    from wledhub.hub import Hub
+    from wledhub.store import Store
+    from pathlib import Path
+    import tempfile
+
+    store = Store(Path(tempfile.mkdtemp()) / "hub.json")
+    store.config = HubConfig.from_dict({
+        "devices": {"d": {"id": "d", "name": "L", "host": "x", "led_count": 4, "room_id": "r"}},
+        "rooms": {"r": {"id": "r", "name": "R", "state": {"on": True, "brightness": 255,
+                                                           "effect": {"source": "hub", "id": "scene", "params": {"scene_id": "s"}}}}},
+        "layout": {"placements": [{"id": "p", "device_id": "d", "start": 0, "count": 3, "points": [[0, 0], [1, 0]]}]},
+        "scenes": {"s": {"name": "S", "pixels": {"d": "ff000000ff000000ffffffff"}}},
+    })
+    hub = Hub(store, "h", "0")
+    hub.rebuild_maps()
+    from wledhub import effects as fxm
+    from wledhub.hub import _Running
+    hub._running["r"] = _Running(fxm.create("scene"), "scene", ("d",))
+    sent = {}
+    hub.ddp.send = lambda host, pixels, rgbw=False: sent.setdefault(host, pixels)
+    hub._render_frame(0.0)
+    assert sent["x"] == [(255, 0, 0), (0, 255, 0), (0, 0, 255), (0, 0, 0)]  # LED 3 painted but not mapped -> off
+    assert "pixels" not in hub.snapshot()["scenes"]["s"]
+
+
+def test_old_single_layout_becomes_first_grid():
+    cfg = HubConfig.from_dict({"layout": {"width": 8, "placements": [{"id": "p", "device_id": "d", "points": [[0, 0], [1, 0]]}]}})
+    assert list(cfg.layouts) == ["main"]
+    assert cfg.layouts["main"].width == 8 and cfg.layouts["main"].placements[0].id == "p"
+    again = HubConfig.from_dict(cfg.to_dict())
+    assert again.layouts["main"].name == "Main grid" and "layout" not in cfg.to_dict()
+
+
+def test_effects_span_each_grid_on_its_own():
+    from wledhub.hub import Hub
+    from wledhub.store import Store
+    from pathlib import Path
+    import tempfile
+
+    store = Store(Path(tempfile.mkdtemp()) / "hub.json")
+    store.config = HubConfig.from_dict({
+        "devices": {"a": {"id": "a", "name": "A", "host": "a", "led_count": 3},
+                    "b": {"id": "b", "name": "B", "host": "b", "led_count": 3}},
+        "layouts": {
+            "front": {"width": 20, "height": 10, "placements": [{"id": "pa", "device_id": "a", "points": [[0, 5], [2, 5]]}]},
+            "tv": {"width": 4, "height": 3, "placements": [{"id": "pb", "device_id": "b", "points": [[3, 1], [4, 1]]}]},
+        },
+    })
+    hub = Hub(store, "h", "0")
+    hub.rebuild_maps()
+    assert hub._grid_of["a"] == ["front"] * 3 and hub._grid_of["b"] == ["tv"] * 3
+    coords = hub._pixel_maps["a"] + hub._pixel_maps["b"]
+    fitted = hub._fit_per_grid(coords, ["front"] * 3 + ["tv"] * 3, local=False)
+    # each grid's own lit area becomes 0..1, independently
+    assert [round(x, 3) for x, _ in fitted] == [0.0, 0.5, 1.0, 0.0, 0.5, 1.0]

@@ -106,6 +106,16 @@ A lamp whose strip is split into parts (for example LEDs 0–55 on the outside a
 4. Any point can be pinned to the cursor LED: click the point, move the cursor, press P. "Close loop" connects the last point back to the first. Dragged points snap into line with the other points (Alt = no snapping), and every change can be undone with Ctrl+Z.
 5. On free lines, Enter on any LED inserts a bend point there ("Bend here"); drag it to where the corner is.
 
+## Grids
+
+`layouts` holds one grid per area (front of house, back, TV wall, kids' room …), each with its own size, background and placements. Coordinates of different grids are unrelated, so the hub tracks which grid every LED is on and fits hub effects per grid: a "Whole house" effect spans each grid's lit area on its own; "This room only" spans the room's LEDs on each grid. Config files with the old single `layout` are migrated to a first grid called "Main grid".
+
+## Effect Studio and scenes
+
+Custom effects (`custom_effects`) are stacks of layers rendered by `wledhub/studio.py`: lines, gradient, rings, wave, sparkle and solid, each with colours, geometry, speed, opacity and blend ("over" or "add") over a background colour. A room runs one with the hub effect `studio` and `params.custom_id` (or, while designing in the Studio, the draft layers inline). Scenes (`scenes`) are painted pictures – one hex colour per LED per device – run with the hub effect `scene` and `params.scene_id`; like everything else they only light mapped LEDs. Live config pushes carry scene names only; the pixels come from `GET api/scenes/{id}`.
+
+The grid editor's effect overlay asks the hub for `GET api/layouts/{id}/field?target=…`: the room's hub effect sampled on a raster over the whole canvas, fitted exactly like the real LEDs.
+
 ## Sides
 
 A "side" is the stretch of LEDs between two corners. A point that lies on a straight line between its neighbours (both segments straight, same direction) is not a corner, so the segments on either side of it form one side – also across the start of a closed loop, for a strip whose LED 0 sits part-way along a side.

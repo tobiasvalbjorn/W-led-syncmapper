@@ -19,7 +19,17 @@ PATCH  api/rooms/{id}
 DELETE api/rooms/{id}
 POST   api/groups             {room_ids, name?, id?}   group rooms (Sonos)
 DELETE api/groups/{id}                        ungroup
-PUT    api/layout                             pixel-grid mapping
+POST   api/layouts            {name}          new grid (area)
+PUT    api/layouts/{id}                       save a grid's mapping
+PATCH  api/layouts/{id}       {name}          rename a grid
+DELETE api/layouts/{id}                       delete a grid (not the last)
+GET    api/layouts/{id}/background            a grid's background image
+GET    api/layouts/{id}/field?target=&cols=&rows=  a room's hub effect sampled over the grid (overlay)
+POST   api/custom-effects     {id?, name, background, layers}  save a Studio effect
+DELETE api/custom-effects/{id}
+POST   api/scenes             {id?, name, pixels: {device: "rrggbb…"}}  save a painted scene
+GET    api/scenes/{id}        full scene (pixels)
+DELETE api/scenes/{id}
 PATCH  api/settings
 POST   api/scan/start         {device_ids, level?}
 POST   api/scan/pattern       {kind, bit?, inverse?, index?}
@@ -32,6 +42,7 @@ Assistant ingress, which strips the /api/hassio_ingress/<token> prefix.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import time
@@ -131,6 +142,8 @@ def create_app(hub: Hub, frontend: Path, token: Optional[str] = None,
     async def get_effects(_request):
         return json_response({
             "hub": fx.catalogue(),
+            "custom": [{"id": k, "name": v.get("name", k)} for k, v in hub.config.custom_effects.items()],
+            "scenes": [{"id": k, "name": v.get("name", k)} for k, v in hub.config.scenes.items()],
             "wled": [{"id": i, "name": n} for i, n in enumerate(hub.wled_effects) if n and n != "RSVD"],
             "palettes": [{"id": i, "name": n} for i, n in enumerate(hub.wled_palettes)],
         })
@@ -232,13 +245,61 @@ def create_app(hub: Hub, frontend: Path, token: Optional[str] = None,
         return json_response({"ok": True})
 
     # layout & settings
-    @routes.get("/api/layout/background")
-    async def get_background(_request):
-        return json_response({"background": hub.config.layout.background})
+    # Effect Studio library
+    @routes.post("/api/custom-effects")
+    async def save_custom(request):
+        data = await body(request)
+        return json_response({"id": hub.save_custom_effect(data, data.get("id"))})
 
-    @routes.put("/api/layout")
+    @routes.delete("/api/custom-effects/{effect_id}")
+    async def delete_custom(request):
+        hub.delete_custom_effect(request.match_info["effect_id"])
+        return json_response({"ok": True})
+
+    @routes.post("/api/scenes")
+    async def save_scene(request):
+        data = await body(request)
+        return json_response({"id": hub.save_scene(data, data.get("id"))})
+
+    @routes.get("/api/scenes/{scene_id}")
+    async def get_scene(request):
+        return json_response(hub.config.scenes[request.match_info["scene_id"]])
+
+    @routes.delete("/api/scenes/{scene_id}")
+    async def delete_scene(request):
+        hub.delete_scene(request.match_info["scene_id"])
+        return json_response({"ok": True})
+
+    # grids (one per area)
+    @routes.post("/api/layouts")
+    async def add_layout(request):
+        data = await body(request)
+        return json_response({"id": hub.add_layout(str(data.get("name", "New grid")))}, 201)
+
+    @routes.patch("/api/layouts/{grid_id}")
+    async def rename_layout(request):
+        hub.rename_layout(request.match_info["grid_id"], str((await body(request)).get("name", "")))
+        return json_response({"ok": True})
+
+    @routes.delete("/api/layouts/{grid_id}")
+    async def delete_layout(request):
+        await hub.delete_layout(request.match_info["grid_id"])
+        return json_response({"ok": True})
+
+    @routes.get("/api/layouts/{grid_id}/field")
+    async def effect_field(request):
+        cols, rows = int(request.query.get("cols", 64)), int(request.query.get("rows", 40))
+        data = hub.effect_field(request.match_info["grid_id"], request.query.get("target", ""), cols, rows)
+        return json_response({"cols": max(2, min(160, cols)), "rows": max(2, min(120, rows)),
+                              "data": base64.b64encode(data).decode()})
+
+    @routes.get("/api/layouts/{grid_id}/background")
+    async def get_background(request):
+        return json_response({"background": hub.config.layouts[request.match_info["grid_id"]].background})
+
+    @routes.put("/api/layouts/{grid_id}")
     async def put_layout(request):
-        await hub.set_layout(await body(request))
+        await hub.set_layout(request.match_info["grid_id"], await body(request))
         return json_response({"ok": True})
 
     @routes.patch("/api/settings")

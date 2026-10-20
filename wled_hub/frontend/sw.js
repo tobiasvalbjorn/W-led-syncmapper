@@ -1,6 +1,6 @@
 // Service worker: caches the app shell so the PWA opens instantly and offline.
 // API calls always go to the network (live state must never come from cache).
-const CACHE = "wled-hub-v2";
+const CACHE = "wled-hub-v4";
 const SHELL = [
   "./",
   "index.html",
@@ -19,8 +19,10 @@ const SHELL = [
   "js/views/settings.js",
   "js/views/scanner.js",
   "js/mapping.js",
+  "js/livepreview.js",
   "js/templates.js",
   "js/views/devicesettings.js",
+  "js/views/studio.js",
 ];
 
 self.addEventListener("install", (event) => {

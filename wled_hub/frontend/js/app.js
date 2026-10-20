@@ -4,8 +4,9 @@ import * as rooms from "./views/rooms.js";
 import * as grid from "./views/grid.js";
 import * as devices from "./views/devices.js";
 import * as settings from "./views/settings.js";
+import * as studio from "./views/studio.js";
 
-const VIEWS = { rooms, grid, devices, settings };
+const VIEWS = { rooms, grid, studio, devices, settings };
 
 // Shared app state. Views read from it and subscribe for updates.
 export const store = {
@@ -18,6 +19,8 @@ export const store = {
   subscribe(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); },
   onPreview(fn) { this.previewListeners.add(fn); return () => this.previewListeners.delete(fn); },
   previewRate(fps) { link?.preview(true, fps); }, // e.g. faster while peeking
+  // back to whatever the current view wants (after a sheet with a live preview closes)
+  previewDone() { link?.preview(!!VIEWS[current]?.wantsPreview, 8); },
 };
 
 let current = null;

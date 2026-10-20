@@ -189,10 +189,14 @@ def device_pixel_map(device: Device, layout: Layout) -> List[Optional[Coord]]:
     return result
 
 
-def mapped_ranges(device: Device, layout: Layout) -> List[Tuple[int, int]]:
-    """Merged [start, stop) LED ranges of a device that are on the grid."""
+def _as_list(layouts) -> List[Layout]:
+    return [layouts] if isinstance(layouts, Layout) else list(layouts)
+
+
+def mapped_ranges(device: Device, layouts) -> List[Tuple[int, int]]:
+    """Merged [start, stop) LED ranges of a device that are on any grid."""
     spans = []
-    for p in layout.placements:
+    for p in (q for layout in _as_list(layouts) for q in layout.placements):
         if p.device_id != device.id:
             continue
         count = p.count or max(0, device.led_count - p.start)
@@ -236,5 +240,20 @@ def fit_to_box(coords: List[Coord], box: Optional[Box]) -> List[Coord]:
     return [(fx(x), fy(y)) for x, y in coords]
 
 
-def build_pixel_maps(devices: List[Device], layout: Layout) -> Dict[str, List[Optional[Coord]]]:
-    return {d.id: device_pixel_map(d, layout) for d in devices}
+def build_pixel_maps(devices: List[Device], layouts) -> Tuple[Dict[str, List[Optional[Coord]]], Dict[str, List[Optional[str]]]]:
+    """Per device: normalised (x, y) per LED, and which grid each LED is on.
+
+    Coordinates of different grids are not comparable, so effects are fitted
+    per grid (see Hub._render_frame). If an LED is on two grids the last wins.
+    """
+    maps: Dict[str, List[Optional[Coord]]] = {}
+    grids: Dict[str, List[Optional[str]]] = {}
+    for d in devices:
+        coords: List[Optional[Coord]] = [None] * d.led_count
+        gids: List[Optional[str]] = [None] * d.led_count
+        for layout in _as_list(layouts):
+            for i, c in enumerate(device_pixel_map(d, layout)):
+                if c is not None:
+                    coords[i], gids[i] = c, layout.id
+        maps[d.id], grids[d.id] = coords, gids
+    return maps, grids

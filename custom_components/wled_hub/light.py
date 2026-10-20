@@ -23,6 +23,8 @@ from .const import DOMAIN, HUB_PREFIX
 from .coordinator import WLEDHubConfigEntry, WLEDHubCoordinator
 
 SOLID = "Solid"
+CUSTOM_PREFIX = "Custom: "
+SCENE_PREFIX = "Scene: "
 
 
 async def async_setup_entry(
@@ -110,9 +112,12 @@ class WLEDHubLight(CoordinatorEntity[WLEDHubCoordinator], LightEntity):
     @property
     def effect_list(self) -> list[str]:
         fx = self.coordinator.effects
+        data = self.coordinator.data
         hub = [HUB_PREFIX + e["name"] for e in fx.get("hub", [])]
+        custom = [CUSTOM_PREFIX + e.get("name", k) for k, e in (data.get("custom_effects") or {}).items()]
+        scenes = [SCENE_PREFIX + e.get("name", k) for k, e in (data.get("scenes") or {}).items()]
         wled = [e["name"] for e in fx.get("wled", [])]
-        return hub + wled
+        return hub + custom + scenes + wled
 
     @property
     def effect(self) -> str | None:
@@ -121,6 +126,14 @@ class WLEDHubLight(CoordinatorEntity[WLEDHubCoordinator], LightEntity):
             return None
         eff = state["effect"]
         fx = self.coordinator.effects
+        data = self.coordinator.data
+        params = eff.get("params") or {}
+        if eff["source"] == "hub" and eff["id"] == "studio":
+            custom = (data.get("custom_effects") or {}).get(params.get("custom_id") or "")
+            return CUSTOM_PREFIX + custom["name"] if custom else None
+        if eff["source"] == "hub" and eff["id"] == "scene":
+            scene = (data.get("scenes") or {}).get(params.get("scene_id") or "")
+            return SCENE_PREFIX + scene["name"] if scene else None
         if eff["source"] == "hub":
             match = next((e for e in fx.get("hub", []) if e["key"] == eff["id"]), None)
             return HUB_PREFIX + match["name"] if match else None
@@ -141,6 +154,15 @@ class WLEDHubLight(CoordinatorEntity[WLEDHubCoordinator], LightEntity):
 
     def _effect_ref(self, name: str) -> dict:
         fx = self.coordinator.effects
+        data = self.coordinator.data
+        if name.startswith(CUSTOM_PREFIX):
+            for cid, e in (data.get("custom_effects") or {}).items():
+                if CUSTOM_PREFIX + e.get("name", cid) == name:
+                    return {"source": "hub", "id": "studio", "params": {"custom_id": cid}}
+        if name.startswith(SCENE_PREFIX):
+            for sid, e in (data.get("scenes") or {}).items():
+                if SCENE_PREFIX + e.get("name", sid) == name:
+                    return {"source": "hub", "id": "scene", "params": {"scene_id": sid}}
         if name.startswith(HUB_PREFIX):
             key = next((e["key"] for e in fx.get("hub", []) if HUB_PREFIX + e["name"] == name), None)
             if key:

@@ -11,7 +11,7 @@ import { h, sheet, toast } from "../ui.js";
 const WORK_WIDTH = 480; // analysis resolution (keeps decoding fast on phones)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-export function openScanner(store) {
+export function openScanner(store, gridId = Object.keys(store.config.layouts)[0]) {
   if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
     sheet(h("div", {},
       h("h2", {}, "Camera requires HTTPS"),
@@ -22,7 +22,7 @@ export function openScanner(store) {
 
   const devices = Object.values(store.config.devices).filter((d) => d.online && d.led_count);
   const chosen = new Set(devices.map((d) => d.id));
-  const L = store.config.layout;
+  const L = store.config.layouts[gridId];
   const area = { x: 0, y: 0, width: L.width, height: L.height };
   let level = 160, settle = 350, stream = null, wakeLock = null, running = false;
 
@@ -186,7 +186,7 @@ export function openScanner(store) {
     // fit image into the chosen grid area, keeping its aspect ratio
     const k = Math.min(area.width / w, area.height / hgt);
     const offX = area.x + (area.width - w * k) / 2, offY = area.y + (area.height - hgt * k) / 2;
-    const layout = structuredClone(store.config.layout);
+    const layout = structuredClone(store.config.layouts[gridId]);
     layout.placements = layout.placements.filter((p) => !scan.device_ids.includes(p.device_id));
     for (const r of scan.ranges) {
       const points = [];
@@ -201,7 +201,7 @@ export function openScanner(store) {
       });
     }
     try {
-      await put("layout", layout);
+      await put(`layouts/${gridId}`, layout);
       toast("Pixel map saved to the grid");
       s.close();
       location.hash = "grid";
