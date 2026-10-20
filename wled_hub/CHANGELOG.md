@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.1
+
+- Much less lag while mapping on a slow connection (e.g. through Home Assistant on a phone): highlight requests no longer queue up – only the newest cursor position is sent.
+- The live connection only ever holds the newest config and preview frame per client instead of a queue, previews run at 8 fps (20 in Peek) and are not rendered at all when nobody has the grid open.
+- The background image is no longer sent with every change; clients fetch it once.
+- Tip: for the snappiest mapping, open the hub directly on your network at http://<home-assistant-ip>:8787.
+
 ## 0.7.0
 
 - WLED's own effects follow the mapping too: when a room runs a WLED effect, the hub sets each mapped device's WLED segments so the mapped LED ranges run the effect and the gaps are switched off. Devices without a placement and 2D matrices are not changed; the setting "WLED effects follow the mapping" turns it off (the hub then restores one full segment).

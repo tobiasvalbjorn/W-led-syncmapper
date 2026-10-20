@@ -17,6 +17,7 @@ export const store = {
   interacting: 0, // >0 while the user drags a slider: don't re-render under their finger
   subscribe(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); },
   onPreview(fn) { this.previewListeners.add(fn); return () => this.previewListeners.delete(fn); },
+  previewRate(fps) { link?.preview(true, fps); }, // e.g. faster while peeking
 };
 
 let current = null;
@@ -38,7 +39,7 @@ function show(tab) {
     cleanup = null;
     return;
   }
-  link?.preview(!!VIEWS[tab].wantsPreview);
+  link?.preview(!!VIEWS[tab].wantsPreview, 8);
   cleanup = VIEWS[tab].render(view, store, document.getElementById("topbar-actions")) || null;
 }
 

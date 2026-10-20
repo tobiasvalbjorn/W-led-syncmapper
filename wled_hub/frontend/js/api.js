@@ -54,13 +54,13 @@ export function throttled(fn, ms = 80) {
 
 // Live connection: config pushes and (optionally) pixel preview frames.
 export function connect({ onConfig, onPreview, onStatus }) {
-  let ws, retry = 1000, wantPreview = false;
+  let ws, retry = 1000, wantPreview = false, previewFps = 8;
   const open = () => {
     const url = new URL("api/ws", base);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     const t = token();
     if (t) url.searchParams.set("token", t);
-    if (wantPreview) url.searchParams.set("preview", "1");
+    if (wantPreview) { url.searchParams.set("preview", "1"); url.searchParams.set("fps", previewFps); }
     ws = new WebSocket(url);
     ws.onopen = () => { retry = 1000; onStatus(true); };
     ws.onmessage = (ev) => {
@@ -76,9 +76,9 @@ export function connect({ onConfig, onPreview, onStatus }) {
   };
   open();
   return {
-    preview(enabled) {
-      wantPreview = enabled;
-      if (ws?.readyState === 1) ws.send(JSON.stringify({ type: "preview", enabled }));
+    preview(enabled, fps = previewFps) {
+      wantPreview = enabled; previewFps = fps;
+      if (ws?.readyState === 1) ws.send(JSON.stringify({ type: "preview", enabled, fps }));
     },
   };
 }

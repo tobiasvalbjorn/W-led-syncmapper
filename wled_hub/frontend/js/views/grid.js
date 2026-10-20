@@ -9,7 +9,7 @@
 // Segments between points can be straight or curved (a "bulge", drag the
 // small square in the middle of a segment). A circle is two points joined by
 // two half circles, so it has two segments like any other shape.
-import { del, get, post, put, throttled } from "../api.js";
+import { del, get, post, put } from "../api.js";
 import {
   MAX_COLOURED_SEGMENTS, anchorsFromLengths, anchorsValid, cornerSegments, isClosed, ledCount,
   newPlacement, placementCoords, segPoint,
@@ -75,7 +75,7 @@ export function render(view, store, actions) {
   const undoBtn = h("button", { class: "btn secondary small", title: "Undo (Ctrl+Z)", onclick: () => undo() }, "↶ Undo");
   const redoBtn = h("button", { class: "btn secondary small", title: "Redo (Ctrl+Y / Ctrl+Shift+Z)", onclick: () => redo() }, "↷ Redo");
   const bgRemoveBtn = h("button", { class: "btn secondary small", hidden: true, onclick: () => {
-    layout.background = null; loadBackground(); markDirty();
+    layout.background = null; layout.background_id = null; loadBackground(); markDirty();
   } }, "Remove background");
   const modeBtnSide = h("button", { onclick: () => setScope("side"), title: "Highlight one side – the LEDs between two points" }, "Side");
   const modeBtnPart = h("button", { class: "active", onclick: () => setScope("part"), title: "Select, move and highlight one part" }, "Part");
@@ -431,6 +431,7 @@ export function render(view, store, actions) {
     peekBtn.classList.toggle("secondary", !on);
     peekBtn.textContent = on ? "Peek: on" : "Peek";
     if (on && pixelView) { pixelView = false; pixelBtn.classList.add("secondary"); }
+    store.previewRate?.(on ? 20 : 8); // smooth while peeking, light otherwise
     draw();
   }
 
@@ -481,16 +482,32 @@ export function render(view, store, actions) {
 
   // --- showing things on the real strip --------------------------------------
 
-  let inflight = Promise.resolve(); // last highlight request, so a stop never overtakes it
-  const sendHighlight = throttled((deviceId, payload) => {
-    inflight = inflight.then(() => post(`devices/${deviceId}/highlight`, payload)).catch((e) => toast(e.message));
-  }, 60);
+  // Highlight requests: one in flight at a time, and only the newest waits.
+  // Ten quick arrow presses on a slow connection send two requests, not ten
+  // in a row – the strip jumps straight to where you are. Stops are kept in
+  // order so a stop never overtakes the highlight before it.
+  let hlQueue = [], hlBusy = false;
+  function pumpHighlight() {
+    if (hlBusy || !hlQueue.length) return;
+    const job = hlQueue.shift();
+    hlBusy = true;
+    const req = job.stop ? del(`devices/${job.stop}/highlight`) : post(`devices/${job.deviceId}/highlight`, job.payload);
+    req.catch((e) => { if (!job.stop) toast(e.message); }).finally(() => { hlBusy = false; pumpHighlight(); });
+  }
+  function sendHighlight(deviceId, payload) {
+    hlQueue = hlQueue.filter((j) => j.stop); // newer position replaces any waiting one
+    hlQueue.push({ deviceId, payload });
+    pumpHighlight();
+  }
+  sendHighlight.cancel = () => { hlQueue = hlQueue.filter((j) => j.stop); };
 
   function stopHighlight() {
     sendHighlight.cancel(); // a queued highlight must not arrive after the stop
     if (!highlighted) return;
     const deviceId = highlighted;
-    inflight = inflight.then(() => del(`devices/${deviceId}/highlight`)).catch(() => {});
+    hlQueue = hlQueue.filter((j) => j.stop || j.deviceId !== deviceId);
+    hlQueue.push({ stop: deviceId });
+    pumpHighlight();
     highlighted = null;
   }
 
@@ -1577,12 +1594,21 @@ export function render(view, store, actions) {
     input.click();
   }
 
+  // The hub sends only a background_id with the layout; the image itself is
+  // fetched once per id (it can be large).
+  let bgLoadedId = null;
   function loadBackground() {
-    bgRemoveBtn.hidden = !layout.background;
-    if (!layout.background) { bgImage = null; return draw(); }
-    const img = new Image();
-    img.onload = () => { bgImage = img; draw(); };
-    img.src = layout.background;
+    bgRemoveBtn.hidden = !(layout.background || layout.background_id);
+    const show = (src) => {
+      const img = new Image();
+      img.onload = () => { bgImage = img; draw(); };
+      img.src = src;
+    };
+    if (layout.background) return show(layout.background);
+    if (!layout.background_id) { bgImage = null; bgLoadedId = null; return draw(); }
+    if (layout.background_id === bgLoadedId && bgImage) return draw();
+    bgLoadedId = layout.background_id;
+    get("layout/background").then((r) => r.background && show(r.background)).catch(() => {});
   }
 
   async function save() {

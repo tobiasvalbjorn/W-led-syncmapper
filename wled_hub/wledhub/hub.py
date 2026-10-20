@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import colorsys
+import zlib
 import logging
 import time
 from dataclasses import dataclass, field
@@ -72,6 +73,7 @@ class Hub:
         self.session: Optional[aiohttp.ClientSession] = None
         self.ddp = DDPSender()
         self.listeners: List[Callable[[dict], None]] = []
+        self.preview_clients = 0  # websocket clients that want pixel previews
         self.discovered: Dict[str, Dict[str, str]] = {}
         self.scan: Optional[ScanSession] = None
         self.wled_effects: List[str] = []
@@ -119,6 +121,10 @@ class Hub:
 
     def snapshot(self) -> dict:
         data = self.config.to_dict(runtime=True)
+        # The background image can be hundreds of kB: clients fetch it once
+        # from api/layout/background and only see an id that changes with it.
+        bg = data["layout"].pop("background", None)
+        data["layout"]["background_id"] = f"{len(bg)}-{zlib.crc32(bg.encode()) & 0xffffffff:08x}" if bg else None
         data["targets"] = [
             {"id": t.id, "kind": t.kind, "name": t.name, "device_ids": [d.id for d in t.devices]}
             for t in self.targets()
@@ -291,7 +297,7 @@ class Hub:
             frame_start = time.monotonic()
             try:
                 self._render_frame(frame_start - start)
-                if self.listeners and frame_start >= next_preview:
+                if self.preview_clients > 0 and frame_start >= next_preview:
                     next_preview = frame_start + 1.0 / PREVIEW_FPS
                     self._broadcast_preview()
             except Exception:  # noqa: BLE001 - one bad effect must not kill the loop
@@ -583,7 +589,10 @@ class Hub:
     async def set_layout(self, data: dict) -> None:
         from .models import Layout
 
+        background = self.config.layout.background
         self.config.layout = Layout.from_dict(data)
+        if "background" not in data:  # clients that never loaded the image keep it
+            self.config.layout.background = background
         self.rebuild_maps()
         self.changed()
         await self.reapply_all()  # WLED segments follow the new mapping

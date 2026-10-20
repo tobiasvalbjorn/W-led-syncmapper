@@ -34,6 +34,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -231,6 +232,10 @@ def create_app(hub: Hub, frontend: Path, token: Optional[str] = None,
         return json_response({"ok": True})
 
     # layout & settings
+    @routes.get("/api/layout/background")
+    async def get_background(_request):
+        return json_response({"background": hub.config.layout.background})
+
     @routes.put("/api/layout")
     async def put_layout(request):
         await hub.set_layout(await body(request))
@@ -275,23 +280,37 @@ def create_app(hub: Hub, frontend: Path, token: Optional[str] = None,
     async def websocket(request):
         ws = web.WebSocketResponse(heartbeat=30)
         await ws.prepare(request)
-        queue: asyncio.Queue = asyncio.Queue(maxsize=50)
-        want_preview = request.query.get("preview") == "1"
+        # Only the newest config and the newest preview frame wait to be sent:
+        # on a slow link (phone via Home Assistant / the internet) nothing
+        # piles up, the client just skips frames.
+        slots: dict = {"config": None, "preview": None}
+        wake = asyncio.Event()
+        pv = {"on": request.query.get("preview") == "1", "fps": float(request.query.get("fps", 8)), "last": 0.0}
+        if pv["on"]:
+            hub.preview_clients += 1
+
+        def set_preview(on: bool, fps: float) -> None:
+            if on != pv["on"]:
+                hub.preview_clients += 1 if on else -1
+            pv["on"], pv["fps"] = on, max(1.0, min(30.0, fps))
 
         def listener(message: dict) -> None:
-            if message["type"] == "preview" and not want_preview:
-                return
-            if queue.full():
-                try:
-                    queue.get_nowait()  # drop oldest instead of blocking the hub
-                except asyncio.QueueEmpty:
-                    pass
-            queue.put_nowait(message)
+            if message["type"] == "preview":
+                now = time.monotonic()
+                if not pv["on"] or now - pv["last"] < 1.0 / pv["fps"]:
+                    return
+                pv["last"] = now
+            slots[message["type"]] = message
+            wake.set()
 
         async def sender() -> None:
             while True:
-                message = await queue.get()
-                await ws.send_str(json.dumps(message, ensure_ascii=False))
+                await wake.wait()
+                wake.clear()
+                for kind in ("config", "preview"):
+                    message, slots[kind] = slots[kind], None
+                    if message is not None:
+                        await ws.send_str(json.dumps(message, ensure_ascii=False))
 
         hub.listeners.append(listener)
         await ws.send_str(json.dumps({"type": "config", "data": hub.snapshot()}, ensure_ascii=False))
@@ -301,12 +320,14 @@ def create_app(hub: Hub, frontend: Path, token: Optional[str] = None,
                 if msg.type == WSMsgType.TEXT:
                     data = json.loads(msg.data)
                     if data.get("type") == "preview":
-                        want_preview = bool(data.get("enabled"))
+                        set_preview(bool(data.get("enabled")), float(data.get("fps", pv["fps"])))
                 elif msg.type == WSMsgType.ERROR:
                     break
         finally:
             task.cancel()
             hub.listeners.remove(listener)
+            if pv["on"]:
+                hub.preview_clients -= 1
         return ws
 
     app.add_routes(routes)

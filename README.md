@@ -44,7 +44,7 @@ data:
 ## Phone app (PWA) and local network
 
 - **In the Home Assistant app**: WLED Hub is in the sidebar.
-- **Directly on the LAN**: open `http://<home-assistant-ip>:8787` and choose *Add to Home Screen* (iOS) or *Install app* (Android).
+- **Directly on the LAN** (fastest – no detour through Home Assistant): open `http://<home-assistant-ip>:8787` and choose *Add to Home Screen* (iOS) or *Install app* (Android).
 - **Camera mapping needs HTTPS**, because browsers only give camera access on secure connections. Use the app through Home Assistant over HTTPS (for example Nabu Casa), or turn on `ssl` in the add-on options with certificates in `/ssl`.
 - **Access control**: by default the LAN port is open to everyone on the network. If guests share your Wi-Fi, set `api_token` in the add-on and open the app once with `?token=<token>`.
 
