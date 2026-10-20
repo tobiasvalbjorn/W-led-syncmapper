@@ -1,4 +1,4 @@
-# WLED Hub (W-led-syncmapper)
+# WLED Hub (WLED-FX-mapper)
 
 A central hub that controls and synchronises all your [WLED](https://kno.wled.ge) devices around the house:
 
@@ -28,8 +28,8 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the architecture, data mode
 
 ## Installing in Home Assistant
 
-1. **Add-on (the hub)**: Settings → Add-ons (Apps) → Store → ⋮ → Repositories → add `https://github.com/tobiasvalbjorn/W-led-syncmapper`. Install **WLED Hub**, turn on "Show in sidebar", and start it.
-2. **Integration**: HACS → ⋮ → Custom repositories → `https://github.com/tobiasvalbjorn/W-led-syncmapper`, category *Integration*. Install **WLED Hub** and restart Home Assistant. The hub then shows up as "Discovered" under *Settings → Devices & services*.
+1. **Add-on (the hub)**: Settings → Add-ons (Apps) → Store → ⋮ → Repositories → add `https://github.com/tobiasvalbjorn/WLED-FX-mapper`. Install **WLED Hub**, turn on "Show in sidebar", and start it.
+2. **Integration**: HACS → ⋮ → Custom repositories → `https://github.com/tobiasvalbjorn/WLED-FX-mapper`, category *Integration*. Install **WLED Hub** and restart Home Assistant. The hub then shows up as "Discovered" under *Settings → Devices & services*.
 3. Open **WLED Hub** in the sidebar. Add the discovered WLED devices under *Devices*, create rooms, and place your light strings under *Grid*.
 
 Every room and group becomes `light.<name>`. The effect list contains both hub effects (prefixed `Hub:`) and WLED's built-in effects, so you can use them in automations:
