@@ -43,7 +43,10 @@ export function render(view, store, actions) {
   let cursor = null; // LED index relative to the placement, null = cursor off
   let guide = null; // { steps: [point indexes], k: position in steps }
   let highlighted = null; // device id currently showing something on the strip
-  let lampMode = false; // select/drag/highlight the whole lamp (all parts of a device)
+  let scope = "part"; // what selection/highlight covers: "side" | "part" | "lamp"
+  let lampMode = false; // scope === "lamp": select/drag/highlight every part of a device
+  let hoverSeg = null; // { pid, a, c }: side lit by highlight mode (relative LED range)
+  let walk = null; // "Draw LED by LED" state, see startWalk()
   let hoverLight = false; // highlight mode: the part/lamp under the mouse lights up for real
   let hoverIds = new Set(); // placement ids lit by highlight mode
   let test = null; // running test pattern: { kind, label, timer }
@@ -66,8 +69,10 @@ export function render(view, store, actions) {
   const bgRemoveBtn = h("button", { class: "btn secondary small", hidden: true, onclick: () => {
     layout.background = null; loadBackground(); markDirty();
   } }, "Remove background");
-  const modeBtnPart = h("button", { class: "active", onclick: () => setLampMode(false), title: "Select, move and highlight one part" }, "Part");
-  const modeBtnLamp = h("button", { onclick: () => setLampMode(true), title: "Select, move and highlight every part of the lamp" }, "Whole lamp");
+  const modeBtnSide = h("button", { onclick: () => setScope("side"), title: "Highlight one side – the LEDs between two points" }, "Side");
+  const modeBtnPart = h("button", { class: "active", onclick: () => setScope("part"), title: "Select, move and highlight one part" }, "Part");
+  const modeBtnLamp = h("button", { onclick: () => setScope("lamp"), title: "Select, move and highlight every part of the lamp" }, "Whole lamp");
+  const walkPanel = h("div");
   const hoverBtn = h("button", { class: "btn secondary small", onclick: () => setHoverLight(!hoverLight),
     title: "Lights up the part/lamp under the mouse (or that you tap) on the real device" }, "Highlight: off");
   // Phone: grid on top, tools below. PC (wide screen): tools in a scrolling
@@ -78,6 +83,7 @@ export function render(view, store, actions) {
     h("aside", { class: "grid-side" },
       h("div", { class: "grid-toolbar" },
         h("button", { class: "btn secondary small", onclick: templateSheet }, "+ Shape / template"),
+        h("button", { class: "btn secondary small", onclick: walkSheet, title: "Build a shape LED by LED with the arrow keys" }, "+ Draw LED by LED"),
         h("button", { class: "btn secondary small", onclick: addPlacement }, "+ Line"),
         h("button", { class: "btn secondary small", onclick: importOutputs }, "Import outputs"),
         h("button", { class: "btn secondary small", onclick: autoMatrix }, "Auto 2D matrix"),
@@ -88,8 +94,9 @@ export function render(view, store, actions) {
         undoBtn, redoBtn,
         saveBtn),
       h("div", { class: "grid-toolbar" },
-        h("div", { class: "segmented", style: { margin: 0 } }, modeBtnPart, modeBtnLamp),
+        h("div", { class: "segmented", style: { margin: 0 } }, modeBtnSide, modeBtnPart, modeBtnLamp),
         hoverBtn),
+      walkPanel,
       testPanel,
       form)));
   const wide = window.matchMedia("(min-width: 1000px)");
@@ -100,7 +107,7 @@ export function render(view, store, actions) {
   const countOf = (p) => ledCount(p, devices()[p.device_id]?.led_count || 0);
   const markDirty = () => {
     dirty = true; saveBtn.textContent = "Save layout •";
-    if (!drag) record(); // drags are recorded once, when the pointer is released
+    if (!drag && !walk) record(); // drags and LED-by-LED drawing are recorded once, when finished
   };
 
   // --- undo / redo ---------------------------------------------------------
@@ -288,7 +295,9 @@ export function render(view, store, actions) {
           dark = R + G + B < 90;
         } else ctx.fillStyle = colorFor(p.device_id);
         ctx.beginPath(); ctx.arc(px, py, r, 0, 2 * Math.PI); ctx.fill();
-        if (hoverIds.has(p.id)) { // lit by highlight mode
+        const rel = p.reverse ? coords.length - 1 - i : i;
+        const inSide = !hoverSeg || hoverSeg.pid !== p.id || (rel >= hoverSeg.a && rel < hoverSeg.a + hoverSeg.c);
+        if (hoverIds.has(p.id) && inSide) { // lit by highlight mode
           ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
           ctx.beginPath(); ctx.arc(px, py, r + 2.5, 0, 2 * Math.PI); ctx.stroke();
         } else if (dark) { // keep unlit LEDs visible on the dark canvas
@@ -412,32 +421,208 @@ export function render(view, store, actions) {
     return lampMode ? layout.placements.filter((q) => q.device_id === p.device_id) : [p];
   }
 
-  function lightParts(parts) {
+  function lightParts(parts, seg = null) {
     const ids = new Set(parts.map((q) => q.id));
-    if ([...ids].join() === [...hoverIds].join()) return;
-    hoverIds = ids;
+    const key = (set, sg) => [...set].join() + (sg ? `:${sg.a}:${sg.c}` : "");
+    if (key(ids, seg) === key(hoverIds, hoverSeg)) return;
+    hoverIds = ids; hoverSeg = seg;
     draw();
     if (!parts.length) return stopHighlight();
     const deviceId = parts[0].device_id;
     if (highlighted && highlighted !== deviceId) stopHighlight();
     highlighted = deviceId;
-    sendHighlight(deviceId, { ranges: parts.map((q) => [q.start || 0, countOf(q)]) });
+    let ranges = parts.map((q) => [q.start || 0, countOf(q)]);
+    if (seg) { // one side: map the relative range to device LEDs
+      const q = parts[0], n = countOf(q), st = q.start || 0;
+      ranges = [[q.reverse ? st + n - (seg.a + seg.c) : st + seg.a, seg.c]];
+    }
+    sendHighlight(deviceId, { ranges });
+  }
+
+  // The side (stretch between two points) a hit falls on, as a relative LED
+  // range – or null when the shape has no sides to speak of.
+  function sideAt(p, hit) {
+    const n = countOf(p);
+    const segs = cornerSegments(p, n);
+    if (!segs) return null;
+    let k = hit.seg;
+    if (hit.i >= 0) {
+      const rel = p.reverse ? n - 1 - hit.i : hit.i;
+      k = segs.findIndex(([a, c]) => rel >= a && rel < a + c);
+    }
+    if (k === undefined || k < 0 || !segs[k]) return null;
+    return { pid: p.id, a: segs[k][0], c: segs[k][1] };
+  }
+
+  function lightHit(hit) {
+    if (!hit.p) return lightParts([]);
+    if (scope === "side") return lightParts([hit.p], sideAt(hit.p, hit));
+    return lightParts(partsFor(hit.p));
   }
 
   function setHoverLight(on) {
     hoverLight = on;
     hoverBtn.textContent = on ? "Highlight: on" : "Highlight: off";
     hoverBtn.classList.toggle("secondary", !on);
-    if (!on) { hoverIds = new Set(); stopHighlight(); draw(); }
+    if (!on) { hoverIds = new Set(); hoverSeg = null; stopHighlight(); draw(); }
     else { stopTest(); if (cursor !== null) cursorOff(); }
   }
 
-  function setLampMode(on) {
-    lampMode = on;
-    modeBtnPart.classList.toggle("active", !on);
-    modeBtnLamp.classList.toggle("active", on);
-    hoverIds = new Set();
+  function setScope(next) {
+    scope = next;
+    lampMode = next === "lamp";
+    modeBtnSide.classList.toggle("active", next === "side");
+    modeBtnPart.classList.toggle("active", next === "part");
+    modeBtnLamp.classList.toggle("active", next === "lamp");
+    hoverIds = new Set(); hoverSeg = null;
     draw(); drawForm(); drawTestPanel();
+  }
+
+  // --- Draw LED by LED -------------------------------------------------------
+  // LED 0 is placed on the grid; every arrow key press adds the next LED one
+  // LED-spacing further in that direction, and lights it on the real strip.
+  // Changing direction (or Enter) makes a corner. The result is an ordinary
+  // line placement whose corners are pinned to their LEDs.
+  const DIRS = { ArrowRight: [1, 0], ArrowLeft: [-1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+
+  function walkSheet() {
+    const devs = Object.values(devices());
+    if (!devs.length) return toast("Add a WLED device first");
+    const st = { device: sel()?.device_id || devs[0].id, start: 0, count: 0, density: 60 };
+    const field = (label, el) => h("div", { class: "field" }, h("label", {}, label), el);
+    const dev = h("select", {}, devs.map((d) => h("option", { value: d.id, selected: d.id === st.device }, `${d.name} (${d.led_count} LEDs)`)));
+    dev.addEventListener("change", () => (st.device = dev.value));
+    const number = (key, attrs = {}) => {
+      const i = h("input", { type: "number", value: st[key], ...attrs });
+      i.addEventListener("change", () => (st[key] = Number(i.value)));
+      return i;
+    };
+    const s = sheet(h("div", {},
+      h("h2", {}, "Draw LED by LED"),
+      h("p", { class: "muted" }, "LED 0 is placed in the middle of the view. Press an arrow key to add the next LED in that direction – the newest LED lights up on the real strip. When it reaches a corner, change direction (or press Enter). Backspace removes the last LED, Esc finishes."),
+      field("Device", dev),
+      h("div", { class: "row" },
+        field("First LED", number("start", { min: 0 })),
+        field("Number of LEDs (0 = the rest)", number("count", { min: 0 }))),
+      field("LED density (LEDs per metre)", number("density", { min: 1, step: 1 })),
+      h("p", { class: "muted" }, "Common strips: 30, 60, 96 or 144 LEDs per metre. It sets the spacing on the grid; the shape can be scaled afterwards."),
+      h("button", { class: "btn", onclick: () => { s.close(); startWalk(st); } }, "Start drawing"),
+    ));
+  }
+
+  function startWalk(st) {
+    const d = devices()[st.device];
+    if (!d) return;
+    stopTest();
+    if (hoverLight) setHoverLight(false);
+    if (cursor !== null) cursorOff();
+    const max = st.count || Math.max(0, d.led_count - st.start);
+    if (!max) return toast("No LEDs left on that device after the first LED");
+    const spacing = 1 / Math.max(1, st.density);
+    const [cx, cy] = center || [layout.width / 2, layout.height / 2];
+    const p = newPlacement(st.device, layout, { start: st.start, count: 1, points: [[cx, cy], [cx, cy]], anchors: [0, 0], name: "" });
+    layout.placements.push(p);
+    selected = p.id;
+    walk = { p, max, spacing, leds: [[cx, cy]], corners: new Set(), dir: null };
+    // zoom so about a third of the strip fits in the view
+    const len = Math.max(spacing * 10, (max * spacing) / 3);
+    zoomTo(Math.min(layout.width / len, layout.height / len), [cx, cy]);
+    rebuildWalk();
+  }
+
+  // Turn the walked LED positions into points (start, corners, end) + anchors.
+  function rebuildWalk() {
+    const { p, leds, corners } = walk;
+    const n = leds.length;
+    const idx = [0, ...[...corners].filter((c) => c > 0 && c < n - 1).sort((a, b) => a - b), n - 1];
+    p.points = idx.map((k) => [+leds[k][0].toFixed(4), +leds[k][1].toFixed(4)]);
+    p.anchors = idx.slice();
+    if (p.points.length === 1) { p.points.push([...p.points[0]]); p.anchors.push(0); }
+    p.count = n;
+    dirty = true; saveBtn.textContent = "Save layout •";
+    const start = p.start || 0;
+    highlighted = p.device_id;
+    sendHighlight(p.device_id, { index: start + n - 1, start, count: walk.max, marks: [...corners].map((c) => start + c) });
+    draw(); drawWalkPanel(); drawForm();
+  }
+
+  function walkStep(dir, steps = 1) {
+    if (!walk) return;
+    const { leds, spacing } = walk;
+    for (let k = 0; k < steps; k++) {
+      if (leds.length >= walk.max) { toast("That was the last LED on the strip"); return finishWalk(); }
+      if (walk.dir && (walk.dir[0] !== dir[0] || walk.dir[1] !== dir[1]) && leds.length > 1) {
+        walk.corners.add(leds.length - 1); // direction changed: the last LED is a corner
+      }
+      walk.dir = dir;
+      const last = leds[leds.length - 1];
+      leds.push([last[0] + dir[0] * spacing, last[1] + dir[1] * spacing]);
+    }
+    rebuildWalk();
+    if (leds.length >= walk.max) { toast("All LEDs are placed"); finishWalk(); }
+  }
+
+  function walkCorner() {
+    if (!walk || walk.leds.length < 2) return;
+    walk.corners.add(walk.leds.length - 1);
+    walk.dir = null; // the next arrow key starts a new side
+    rebuildWalk();
+  }
+
+  function walkBack() {
+    if (!walk || walk.leds.length <= 1) return;
+    walk.leds.pop();
+    walk.corners.delete(walk.leds.length); // the removed LED can no longer be a corner
+    const n = walk.leds.length;
+    if (n >= 2) {
+      const a = walk.leds[n - 2], b = walk.leds[n - 1];
+      walk.dir = [Math.sign(Math.round((b[0] - a[0]) / walk.spacing)), Math.sign(Math.round((b[1] - a[1]) / walk.spacing))];
+    } else walk.dir = null;
+    rebuildWalk();
+  }
+
+  function finishWalk() {
+    if (!walk) return;
+    const { p, leds } = walk;
+    walk = null;
+    stopHighlight();
+    if (leds.length < 2) {
+      layout.placements = layout.placements.filter((q) => q.id !== p.id);
+      selected = layout.placements[0]?.id || null;
+      toast("Nothing drawn");
+    } else {
+      toast(`Drew ${leds.length} LEDs with ${p.points.length - 2} corner(s) – remember to save the layout`);
+    }
+    record();
+    fitSelected(); draw(); drawWalkPanel(); drawForm(); drawTestPanel();
+  }
+
+  function onWalkKey(e) {
+    const tag = document.activeElement?.tagName;
+    if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+    if (DIRS[e.key]) { e.preventDefault(); return walkStep(DIRS[e.key], e.shiftKey ? 10 : 1); }
+    if (e.key === "Enter") { e.preventDefault(); return walkCorner(); }
+    if (e.key === "Backspace") { e.preventDefault(); return walkBack(); }
+    if (e.key === "Escape") { e.preventDefault(); return finishWalk(); }
+  }
+
+  function drawWalkPanel() {
+    if (!walk) return fill(walkPanel);
+    const b = (label, fn, title) => h("button", { class: "btn small secondary", title, onclick: fn }, label);
+    const arrow = (label, key) => b(label, () => walkStep(DIRS[key], 1), `${key.replace("Arrow", "")} (arrow key)`);
+    const dirName = walk.dir ? { "1,0": "→", "-1,0": "←", "0,-1": "↑", "0,1": "↓" }[walk.dir.join()] : "–";
+    fill(walkPanel,
+      h("div", { class: "section-title" }, "Drawing LED by LED"),
+      h("div", { class: "list", style: { padding: "10px 12px" } },
+        h("p", { style: { margin: "0 0 8px" } },
+          `LED ${walk.leds.length - 1} of ${walk.max - 1} placed · direction ${dirName} · ${walk.corners.size} corner(s)`),
+        h("div", { class: "row", style: { gap: "6px", flexWrap: "wrap" } },
+          arrow("←", "ArrowLeft"), arrow("↑", "ArrowUp"), arrow("↓", "ArrowDown"), arrow("→", "ArrowRight"),
+          b("+10", () => walk.dir && walkStep(walk.dir, 10), "Shift+arrow"),
+          b("Corner (Enter)", walkCorner), b("Undo LED (⌫)", walkBack),
+          h("button", { class: "btn small", onclick: finishWalk }, "Finish (Esc)")),
+        h("p", { class: "muted", style: { margin: "8px 0 0", fontSize: "13px" } },
+          "The newest LED is white on the real strip, corners are amber. Changing direction makes a corner automatically.")));
   }
 
   // --- test patterns ----------------------------------------------------------
@@ -581,6 +766,7 @@ export function render(view, store, actions) {
   }
 
   function onKey(e) {
+    if (walk) return onWalkKey(e);
     if (cursor === null) return;
     const tag = document.activeElement?.tagName;
     if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
@@ -751,8 +937,9 @@ export function render(view, store, actions) {
       if (k >= 0) { drag = { p, bend: k, last: pt }; canvas.setPointerCapture(e.pointerId); return; }
     }
     // select the part under the pointer; with the cursor on, jump to the tapped LED
-    const { p: best, i: bestI } = hitTest(pt, tol);
-    if (best && hoverLight) lightParts(partsFor(best));
+    const hit = hitTest(pt, tol);
+    const { p: best, i: bestI } = hit;
+    if (best && hoverLight) lightHit(hit);
     if (!best) {
       if (zoom > 1) { drag = { pan: true, last: [e.clientX, e.clientY] }; canvas.setPointerCapture(e.pointerId); }
       return;
@@ -770,8 +957,7 @@ export function render(view, store, actions) {
   canvas.addEventListener("pointermove", (e) => {
     if (!drag) {
       if (hoverLight && e.pointerType === "mouse") {
-        const { p } = hitTest(fromEvent(e), tolerance());
-        lightParts(p ? partsFor(p) : []);
+        lightHit(hitTest(fromEvent(e), tolerance()));
       }
       return;
     }
@@ -842,9 +1028,14 @@ export function render(view, store, actions) {
     if (best) return { p: best, i: bestI };
     for (const q of layout.placements) {
       if (q.shape === "line") {
-        const path = pathPoints(q);
-        for (let k = 0; k < path.length - 1; k++) {
-          if (segDist(pt, path[k], path[k + 1]) < tol) return { p: q, i: -1 };
+        for (let k = 0; k < q.points.length - 1; k++) {
+          const a = q.points[k], b = q.points[k + 1], bu = bulgeOf(q, k), steps = bu ? 24 : 1;
+          let prev = a;
+          for (let st = 1; st <= steps; st++) {
+            const next = segPoint(a, b, bu, st / steps);
+            if (segDist(pt, prev, next) < tol) return { p: q, i: -1, seg: k };
+            prev = next;
+          }
         }
       } else if (q.shape === "matrix" && pt[0] >= q.x && pt[0] <= q.x + q.width && pt[1] >= q.y && pt[1] <= q.y + q.height) {
         return { p: q, i: -1 };
@@ -1113,6 +1304,7 @@ export function render(view, store, actions) {
     document.removeEventListener("keydown", onKey);
     document.removeEventListener("keydown", onUndoKey);
     clearInterval(test?.timer);
+    walk = null;
     stopHighlight();
   };
 }

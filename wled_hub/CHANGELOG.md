@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.0
+
+- "Draw LED by LED": place LED 0 and build the shape with the arrow keys, one LED (or ten with Shift) at a time. The newest LED lights up on the real strip, changing direction or pressing Enter makes a corner, Backspace removes the last LED, and drawing stops by itself at the last LED.
+- Highlight scope "Side": with highlight on, the stretch between two points under the mouse lights up on the real strip (next to "Part" and "Whole lamp").
+
 ## 0.3.0
 
 - Grid editor: undo / redo (Ctrl+Z, Ctrl+Y or Ctrl+Shift+Z, and buttons).
