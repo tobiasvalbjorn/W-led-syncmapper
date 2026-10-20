@@ -97,7 +97,7 @@ A lamp whose strip is split into parts (for example LEDs 0–55 on the outside a
 
 ## Mapping by hand: LED cursor and shape templates
 
-**Draw LED by LED** is the quickest way for straight-sided shapes: LED 0 is placed on the grid and every arrow key press adds the next LED one LED-spacing (from the strip's LEDs per metre) further in that direction, while the hub lights that LED on the real strip. Changing direction or pressing Enter makes a corner; the result is a line placement with every corner pinned to its LED.
+**Draw LED by LED** is the quickest way for straight-sided shapes: LED 0 is placed on the grid and every arrow key press adds the next LED one LED-spacing (from the strip's LEDs per metre) further in that direction, while the hub lights that LED on the real strip. Enter makes a corner (an arrow key in a new direction before Enter turns the current side instead); the result is a line placement with every corner pinned to its LED.
 
 
 1. Create a shape from a template (rectangle for a TV backlight, window or door; three sides; L; gable; circle; line), choosing where LED 0 sits and the direction.

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1
+
+- Draw LED by LED: only Enter makes a corner. An arrow key in a new direction before Enter turns the current side instead.
+
 ## 0.4.0
 
 - "Draw LED by LED": place LED 0 and build the shape with the arrow keys, one LED (or ten with Shift) at a time. The newest LED lights up on the real strip, changing direction or pressing Enter makes a corner, Backspace removes the last LED, and drawing stops by itself at the last LED.
