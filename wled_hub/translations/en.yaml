@@ -1,0 +1,18 @@
+configuration:
+  port:
+    name: LAN port
+    description: Port for the web app on your network (http(s)://<home-assistant-ip>:<port>). Ingress inside Home Assistant always works.
+  api_token:
+    name: API token
+    description: Optional. If set, the LAN port requires this token (open the app once with ?token=<token>). Recommended if your network has guests.
+  ssl:
+    name: Use HTTPS on the LAN port
+    description: Needed for the camera pixel-mapping when the app is opened directly on the LAN. Uses certificates from /ssl.
+  certfile:
+    name: Certificate file
+    description: File in /ssl
+  keyfile:
+    name: Private key file
+    description: File in /ssl
+  log_level:
+    name: Log level

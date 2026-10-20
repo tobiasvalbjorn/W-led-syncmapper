@@ -1,0 +1,2 @@
+aiohttp>=3.9,<4
+zeroconf>=0.132

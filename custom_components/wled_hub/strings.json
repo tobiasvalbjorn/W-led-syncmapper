@@ -1,0 +1,33 @@
+{
+  "config": {
+    "flow_title": "WLED Hub ({host})",
+    "step": {
+      "user": {
+        "title": "Connect to WLED Hub",
+        "description": "Enter the address of your WLED Hub (the add-on uses your Home Assistant IP and port 8787).",
+        "data": { "host": "Host", "port": "Port", "token": "API token (optional)" }
+      },
+      "confirm": {
+        "title": "WLED Hub found",
+        "description": "Add the WLED Hub at {host}? Enter the API token only if you set one in the add-on.",
+        "data": { "token": "API token (optional)" }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect to the hub.",
+      "invalid_auth": "Wrong API token."
+    },
+    "abort": {
+      "already_configured": "This hub is already configured.",
+      "not_wled_hub": "The discovered service is not a WLED Hub."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "WLED Hub options",
+        "data": { "show_panel": "Show the WLED Hub app in the sidebar (only needed when the hub is not the add-on)" }
+      }
+    }
+  }
+}

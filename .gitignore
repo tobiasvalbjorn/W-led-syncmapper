@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.devdata/
+.pytest_cache/
+*.broken.json

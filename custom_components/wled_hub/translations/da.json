@@ -1,0 +1,33 @@
+{
+  "config": {
+    "flow_title": "WLED Hub ({host})",
+    "step": {
+      "user": {
+        "title": "Forbind til WLED Hub",
+        "description": "Indtast adressen på din WLED Hub (add-on'en bruger Home Assistants IP og port 8787).",
+        "data": { "host": "Vært", "port": "Port", "token": "API-token (valgfri)" }
+      },
+      "confirm": {
+        "title": "WLED Hub fundet",
+        "description": "Tilføj WLED Hub på {host}? Udfyld kun API-token hvis du har sat et i add-on'en.",
+        "data": { "token": "API-token (valgfri)" }
+      }
+    },
+    "error": {
+      "cannot_connect": "Kunne ikke forbinde til hub'en.",
+      "invalid_auth": "Forkert API-token."
+    },
+    "abort": {
+      "already_configured": "Denne hub er allerede sat op.",
+      "not_wled_hub": "Den fundne tjeneste er ikke en WLED Hub."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "WLED Hub-indstillinger",
+        "data": { "show_panel": "Vis WLED Hub-appen i sidebaren (kun nødvendigt hvis hub'en ikke er add-on'en)" }
+      }
+    }
+  }
+}
