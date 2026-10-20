@@ -23,8 +23,8 @@ Se [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for arkitektur, datamodel og syn
 
 ## Installation i Home Assistant
 
-1. **Add-on (hub'en)**: Indstillinger → Add-ons (Apps) → Butik → ⋮ → Repositories → tilføj `https://github.com/OWNER/REPO`. Installer **WLED Hub**, slå "Vis i sidebar" til, og start den.
-2. **Integration**: HACS → ⋮ → Custom repositories → `https://github.com/OWNER/REPO`, kategori *Integration*. Installer **WLED Hub** og genstart Home Assistant. Hub'en dukker derefter op under *Indstillinger → Enheder og tjenester* som "Fundet".
+1. **Add-on (hub'en)**: Indstillinger → Add-ons (Apps) → Butik → ⋮ → Repositories → tilføj `https://github.com/tobiasvalbjorn/W-led-syncmapper`. Installer **WLED Hub**, slå "Vis i sidebar" til, og start den.
+2. **Integration**: HACS → ⋮ → Custom repositories → `https://github.com/tobiasvalbjorn/W-led-syncmapper`, kategori *Integration*. Installer **WLED Hub** og genstart Home Assistant. Hub'en dukker derefter op under *Indstillinger → Enheder og tjenester* som "Fundet".
 3. Åbn **WLED Hub** i sidebaren. Tilføj de fundne WLED-enheder under *Enheder*, opret rum, og placér lyskæderne under *Grid*.
 
 Hvert rum og hver gruppe bliver til `light.<navn>`. Effektlisten indeholder både hub-effekter (præfiks `Hub:`) og WLED's egne effekter, så de kan bruges i automationer:
