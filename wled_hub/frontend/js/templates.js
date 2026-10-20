@@ -9,7 +9,7 @@ export const TEMPLATES = {
   u_bottom: { name: "Three sides – no top", closed: false },
   l: { name: "L shape (two sides)", closed: false },
   gable: { name: "Gable / roof (^)", closed: false },
-  circle: { name: "Circle / ring (2 points, arcs)", closed: true },
+  circle: { name: "Circle / ring (N, E, S, W)", closed: true },
   arc: { name: "Arc (e.g. arched window)", closed: false },
   line: { name: "Straight line", closed: false },
 };
@@ -67,14 +67,18 @@ export function buildTemplate(kind, { x, y, w, h, start = "bottom-left", clockwi
       case "gable":
         return leftStart ? [[x, y + h], [x + w / 2, y], [x + w, y + h]] : [[x + w, y + h], [x + w / 2, y], [x, y + h]];
       case "circle": {
-        // Two points on opposite sides, joined by two half circles (bulge ±1).
-        // Uses the width as diameter; LEDs are spread evenly around it.
+        // Four points – north, east, south, west – joined by quarter arcs
+        // (bulge ±tan(22.5°)). The corner guide pins the LED at each compass
+        // point. Uses the width as diameter.
         const cx = x + w / 2, cy = y + h / 2, r = w / 2;
-        const top = [cx, cy - r], bottom = [cx, cy + r];
-        const first = start.startsWith("top") ? top : bottom;
-        const other = first === top ? bottom : top;
-        bulges = clockwise ? [-1, -1] : [1, 1];
-        return [first, other, first];
+        const N = [cx, cy - r], E = [cx + r, cy], S = [cx, cy + r], W = [cx - r, cy];
+        const ring = clockwise ? [N, E, S, W] : [N, W, S, E]; // as seen on screen
+        const first = start.startsWith("top") ? N : start === "left-mid" ? W : start === "right-mid" ? E : S;
+        const i = ring.indexOf(first);
+        const ordered = [...ring.slice(i), ...ring.slice(0, i)];
+        const q = Math.tan(Math.PI / 8) * (clockwise ? -1 : 1);
+        bulges = [q, q, q, q];
+        return [...ordered, first];
       }
       case "arc": // a half circle over the opening, e.g. an arched window
         bulges = [leftStart ? -1 : 1];
@@ -87,8 +91,8 @@ export function buildTemplate(kind, { x, y, w, h, start = "bottom-left", clockwi
 }
 
 // Which points the corner guide asks for (every point but the start, and
-// not the closing point of a closed shape). For a circle that is just the
-// opposite point.
+// not the closing point of a closed shape). For a circle: the other three
+// compass points.
 export function cornerSteps(kind, points) {
   const closed = TEMPLATES[kind]?.closed;
   const out = [];

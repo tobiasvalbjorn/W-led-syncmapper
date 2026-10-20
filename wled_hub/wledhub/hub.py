@@ -41,7 +41,7 @@ from .wled import WLEDClient, WLEDError, native_state, parse_info, realtime_stat
 _LOGGER = logging.getLogger(__name__)
 
 POLL_INTERVAL = 15.0
-PREVIEW_FPS = 10
+PREVIEW_FPS = 20
 # Bit 1 is WLED's default sync group; leave it to devices the hub does not
 # manage and give each native-mode target its own bit from 2..128.
 SYNC_BITS = [2, 4, 8, 16, 32, 64, 128]

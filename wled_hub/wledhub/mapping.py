@@ -167,34 +167,27 @@ def placement_coords(p: Placement, device_leds: int) -> List[Coord]:
     return coords
 
 
-def device_pixel_map(device: Device, layout: Layout, fallback_row: int = 0) -> List[Optional[Coord]]:
+def device_pixel_map(device: Device, layout: Layout) -> List[Optional[Coord]]:
     """Normalised (x, y) for every LED on a device, or None for "stay dark".
 
-    Once a device has at least one placement, only the LEDs drawn on the grid
-    take part in hub effects; the rest are None and stay off. A device with no
-    placement at all gets a fallback horizontal line in its own row, so a new
-    device still shows something before it is mapped.
+    Strict: only LEDs drawn on the grid take part in hub effects. Every other
+    LED is None and stays off – including every LED of a device that has no
+    placement yet.
     """
     n = device.led_count
     w = layout.width or 1.0
     h = layout.height or 1.0
     result: List[Optional[Coord]] = [None] * n
-    placed = False
 
     for p in layout.placements:
         if p.device_id != device.id:
             continue
-        placed = True
         for offset, (x, y) in enumerate(placement_coords(p, n)):
             idx = p.start + offset
             if 0 <= idx < n:
                 result[idx] = (x / w, y / h)
-
-    if not placed:
-        row_y = min(0.95, 0.05 + 0.1 * fallback_row)
-        result = [(i / max(1, n - 1), row_y) for i in range(n)]
     return result
 
 
 def build_pixel_maps(devices: List[Device], layout: Layout) -> Dict[str, List[Optional[Coord]]]:
-    return {d.id: device_pixel_map(d, layout, row) for row, d in enumerate(devices)}
+    return {d.id: device_pixel_map(d, layout) for d in devices}

@@ -48,6 +48,7 @@ export function render(view, store, actions) {
   let lampMode = false; // scope === "lamp": select/drag/highlight every part of a device
   let hoverSeg = null; // { pid, ranges }: side lit by highlight mode (relative LED ranges)
   let pixelView = false; // canvas shows only the mapped pixels, white on black
+  let peek = false; // canvas shows the live colours of the mapped LEDs on black
   // Box selection: [{ pid, k }] points (k = point index; k = "all" for a matrix)
   let multi = [];
   let box = null; // [x0, y0, x1, y1] in layout units while dragging a selection box
@@ -79,6 +80,8 @@ export function render(view, store, actions) {
   const modeBtnPart = h("button", { class: "active", onclick: () => setScope("part"), title: "Select, move and highlight one part" }, "Part");
   const modeBtnLamp = h("button", { onclick: () => setScope("lamp"), title: "Select, move and highlight every part of the lamp" }, "Whole lamp");
   const walkPanel = h("div");
+  const peekBtn = h("button", { class: "btn secondary small", title: "Watch the running effect live on the mapped LEDs",
+    onclick: () => setPeek(!peek) }, "Peek");
   const pixelBtn = h("button", { class: "btn secondary small", title: "Show only the mapped pixels, white on black",
     onclick: () => { pixelView = !pixelView; pixelBtn.classList.toggle("secondary", !pixelView); draw(); } }, "Pixel view");
   const hoverBtn = h("button", { class: "btn secondary small", onclick: () => setHoverLight(!hoverLight),
@@ -99,7 +102,7 @@ export function render(view, store, actions) {
         bgRemoveBtn,
         h("button", { class: "btn secondary small", onclick: () => fitSelected() }, "Zoom to selection"),
         h("button", { class: "btn secondary small", onclick: () => zoomTo(1) }, "Show all"),
-        pixelBtn,
+        pixelBtn, peekBtn,
         undoBtn, redoBtn,
         saveBtn),
       h("div", { class: "grid-toolbar" },
@@ -247,6 +250,15 @@ export function render(view, store, actions) {
     return [];
   }
 
+  // N / E / S / W for a point of a circle, from where it sits relative to the centre.
+  function compass(p, pt) {
+    const pts = p.points.slice(0, -1);
+    const cx = pts.reduce((a, q) => a + q[0], 0) / pts.length, cy = pts.reduce((a, q) => a + q[1], 0) / pts.length;
+    const dx = pt[0] - cx, dy = pt[1] - cy;
+    if (Math.abs(dx) > Math.abs(dy)) return dx > 0 ? "E" : "W";
+    return dy > 0 ? "S" : "N";
+  }
+
   // Middle of every segment: drag it to bend the segment into an arc.
   function bendHandles(p) {
     if (p.shape !== "line") return [];
@@ -275,6 +287,7 @@ export function render(view, store, actions) {
   function draw() {
     const dpr = window.devicePixelRatio || 1;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (peek) return drawPeek();
     if (pixelView) return drawPixels();
     ctx.fillStyle = "#0b0b0d";
     ctx.fillRect(ox, oy, layout.width * scale, layout.height * scale);
@@ -359,6 +372,11 @@ export function render(view, store, actions) {
           ctx.fillStyle = "#fff";
           ctx.fillText(`#${p.anchors[i]}`, x + 9 * dpr, y - 9 * dpr);
         }
+        if (p.template === "circle" && !(isClosed(p.points) && i === p.points.length - 1)) {
+          ctx.fillStyle = "#ffb020"; ctx.font = `bold ${12 * dpr}px sans-serif`;
+          ctx.fillText(compass(p, hp), x - 4 * dpr, y + 22 * dpr);
+          ctx.font = `${11 * dpr}px sans-serif`;
+        }
       });
       if (coords.length && !anchored) { // mark LED 0
         const [x, y] = toPx(p.reverse ? coords[coords.length - 1] : coords[0]);
@@ -402,6 +420,46 @@ export function render(view, store, actions) {
       ctx.fillStyle = "rgba(79,172,254,.12)"; ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
       ctx.setLineDash([5 * dpr, 4 * dpr]); ctx.strokeRect(x0, y0, x1 - x0, y1 - y0); ctx.setLineDash([]);
     }
+  }
+
+  // Peek: what the real lights show right now (hub preview, ~20 fps), only
+  // for LEDs on the grid, big and glowing on black – check that an effect
+  // really moves the way the house is laid out.
+  function setPeek(on) {
+    peek = on;
+    peekBtn.classList.toggle("secondary", !on);
+    peekBtn.textContent = on ? "Peek: on" : "Peek";
+    if (on && pixelView) { pixelView = false; pixelBtn.classList.add("secondary"); }
+    draw();
+  }
+
+  function drawPeek() {
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    const r = Math.max(1.5, Math.min(7, scale * 0.06));
+    // glow is pretty but costly: skip it on big installations
+    const glow = layout.placements.reduce((a, q) => a + countOf(q), 0) < 1500;
+    for (const p of layout.placements) {
+      const d = devices()[p.device_id];
+      if (!d) continue;
+      const frame = store.preview[p.device_id] ? atob(store.preview[p.device_id]) : null;
+      placementCoords(p, d.led_count).forEach((c, i) => {
+        const idx = (p.start || 0) + (p.reverse ? -1 - i + countOf(p) : i);
+        let R = 20, G = 20, B = 20;
+        if (frame && frame.length >= idx * 3 + 3) {
+          R = frame.charCodeAt(idx * 3); G = frame.charCodeAt(idx * 3 + 1); B = frame.charCodeAt(idx * 3 + 2);
+        }
+        const [x, y] = toPx(c);
+        ctx.fillStyle = `rgb(${R},${G},${B})`;
+        ctx.shadowColor = ctx.fillStyle;
+        ctx.shadowBlur = glow && R + G + B > 30 ? r * 3 : 0;
+        ctx.beginPath(); ctx.arc(x, y, r, 0, 2 * Math.PI); ctx.fill();
+      });
+    }
+    ctx.shadowBlur = 0;
+    const dpr = window.devicePixelRatio || 1;
+    ctx.fillStyle = "rgba(255,255,255,.6)"; ctx.font = `${11 * dpr}px sans-serif`;
+    ctx.fillText(Object.keys(store.preview).length ? "Peek – live" : "Peek – waiting for the hub…", 10 * dpr, 18 * dpr);
   }
 
   // Pixel view: the mapping as an image – black canvas, every mapped LED a white dot.
@@ -659,6 +717,7 @@ export function render(view, store, actions) {
   function finishWalk() {
     if (!walk) return;
     const { p, leds } = walk;
+    const walk_rest = walk.max - leds.length;
     walk = null;
     stopHighlight();
     if (leds.length < 2) {
@@ -666,7 +725,8 @@ export function render(view, store, actions) {
       selected = layout.placements[0]?.id || null;
       toast("Nothing drawn");
     } else {
-      toast(`Drew ${leds.length} LEDs with ${p.points.length - 2} corner(s) – remember to save the layout`);
+      const rest = walk_rest;
+      toast(`Mapped ${leds.length} LEDs with ${p.points.length - 2} corner(s)${rest ? ` – the last ${rest} LED(s) are not mapped` : ""}. Remember to save the layout.`);
     }
     record();
     fitSelected(); draw(); drawWalkPanel(); drawForm(); drawTestPanel();
@@ -695,7 +755,7 @@ export function render(view, store, actions) {
           arrow("←", "ArrowLeft"), arrow("↑", "ArrowUp"), arrow("↓", "ArrowDown"), arrow("→", "ArrowRight"),
           b("+10", () => walk.dir && walkStep(walk.dir, 10), "Shift+arrow"),
           b("Corner (Enter)", walkCorner), b("Undo LED (⌫)", walkBack),
-          h("button", { class: "btn small", onclick: finishWalk }, "Finish (Esc)")),
+          h("button", { class: "btn small", onclick: finishWalk, title: "The LEDs after this one are not mapped" }, "Stop mapping here (Esc)")),
         h("p", { class: "muted", style: { margin: "8px 0 0", fontSize: "13px" } },
           "The newest LED is white on the real strip, corners are amber. Same arrow = add, opposite arrow = remove, Enter = corner (then any arrow starts the next side).")));
   }
@@ -924,6 +984,7 @@ export function render(view, store, actions) {
           : p.shape === "line" ? h("button", { class: "btn small", onclick: bendHere }, "Bend here (Enter)") : null,
         guide ? b("Skip corner", () => { guide.k++; if (guide.k >= guide.steps.length) guide = null; draw(); drawForm(); }) : null,
         p.shape !== "matrix" ? b("Split here", splitHere, "Split the string into two parts at the cursor – e.g. outer and inner ring") : null,
+        p.shape === "line" ? b("Stop mapping here", stopMappingHere, "End this shape at the cursor LED – the LEDs after it are not mapped and stay dark") : null,
         p.shape === "line" && selPoint !== null && selPoint > 0 && !(isClosed(p.points) && selPoint === p.points.length - 1)
           ? h("button", { class: "btn small", onclick: pinPointHere, title: "The blue-ringed point sits at the cursor LED" }, `Pin point ${selPoint + 1} here (P)`) : null,
         b("Close cursor (Esc)", cursorOff)),
@@ -977,6 +1038,37 @@ export function render(view, store, actions) {
           }
           markDirty(); draw();
         }, "Flip horizontally")));
+  }
+
+  // End the shape at the cursor LED: it becomes the last mapped LED, the
+  // rest of the strip is left out of the mapping (and stays dark).
+  function stopMappingHere() {
+    const p = sel();
+    if (!p || p.shape !== "line" || cursor === null) return;
+    const n = countOf(p);
+    const led = p.reverse ? n - 1 - cursor : cursor; // wiring index of the new last LED
+    if (led >= n - 1) return toast("The cursor is already on the last LED");
+    if (led < 1) return toast("Move the cursor further along – a shape needs at least 2 LEDs");
+    if (!anchorsValid(p)) p.anchors = anchorsFromLengths(p.points, n, p.bulges);
+    const coords = placementCoords({ ...p, reverse: false }, devices()[p.device_id].led_count);
+    const j = p.anchors.findIndex((a) => a > led); // first point beyond the new end
+    const keep = j < 0 ? p.points.length : j;
+    const k = keep - 1; // segment the new end lies on
+    const bulges = [...(p.bulges || [])];
+    while (bulges.length < p.points.length - 1) bulges.push(0);
+    if (j > 0 && bulges[k] && p.anchors[j] > p.anchors[k]) { // shorten the arc to end at the LED
+      const f = (led - p.anchors[k]) / (p.anchors[j] - p.anchors[k]);
+      bulges[k] = Math.tan((4 * Math.atan(bulges[k]) * f) / 4);
+    }
+    p.points = [...p.points.slice(0, keep).map((q) => [...q]), [...coords[led]]];
+    p.anchors = [...p.anchors.slice(0, keep), led];
+    p.bulges = bulges.slice(0, p.points.length - 1);
+    if (p.anchors[p.anchors.length - 2] === led) { p.points.pop(); p.anchors.pop(); p.bulges = p.bulges.slice(0, p.points.length - 1); }
+    p.count = led + 1;
+    p.template = "";
+    cursor = Math.min(cursor, p.count - 1);
+    markDirty(); draw(); drawForm(); drawTestPanel(); syncHighlight();
+    toast(`Mapping ends at LED ${(p.start || 0) + led} – the rest of the strip is not mapped`);
   }
 
   // Split the selected part in two at the cursor: LEDs before the cursor stay,

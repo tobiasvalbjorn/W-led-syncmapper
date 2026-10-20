@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.0
+
+- Strict mapping: only LEDs drawn on the grid take part in hub effects. Unmapped LEDs – and devices with no placement – stay dark (no more temporary line).
+- Circle template has four points – N, E, S, W – joined by quarter arcs, labelled on the grid; the corner guide pins the LED at each compass point.
+- "Stop mapping here" ends a shape at the cursor LED; the rest of the strip is left out of the mapping. In Draw LED by LED the finish button says the same.
+- "Peek": watch the running effect live on the mapped LEDs (black background, glowing colours). Live preview raised to 20 fps.
+
 ## 0.5.1
 
 - Draw LED by LED: the opposite arrow key removes the last LED of the current side (it never goes past the last corner; holding it stops there). Same arrow adds, Enter makes a corner, and the next arrow after a corner starts the new side.

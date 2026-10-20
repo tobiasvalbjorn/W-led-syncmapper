@@ -65,9 +65,9 @@ def test_two_outputs_on_one_device():
     assert pmap == [(0, 0), (1, 0), (0, 1), (1, 1)]
 
 
-def test_unplaced_device_gets_fallback_line():
+def test_unplaced_device_stays_dark():
     pmap = device_pixel_map(Device(id="d", name="d", host="x", led_count=3), Layout())
-    assert [x for x, _ in pmap] == [0, 0.5, 1]
+    assert pmap == [None, None, None]
 
 
 def test_only_mapped_leds_take_part_once_placed():

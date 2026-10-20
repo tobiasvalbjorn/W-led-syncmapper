@@ -1,5 +1,5 @@
 name: WLED Hub
-version: "0.5.1"
+version: "0.6.0"
 slug: wled_hub
 description: Sync and control all your WLED devices as Sonos-style rooms, with a house-wide pixel grid
 url: https://github.com/tobiasvalbjorn/W-led-syncmapper
